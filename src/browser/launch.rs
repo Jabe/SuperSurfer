@@ -1,8 +1,12 @@
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::browser::registry::is_chromium_browser;
 #[cfg(target_os = "macos")]
 use crate::browser::registry::is_gecko_browser;
-use crate::browser::registry::{is_chromium_browser, BrowserRegistry};
+use crate::browser::registry::BrowserRegistry;
 use crate::routing::RouteDecision;
-use anyhow::{Context as _, Result};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use anyhow::Context as _;
+use anyhow::Result;
 #[cfg(target_os = "macos")]
 use std::fs;
 #[cfg(target_os = "macos")]
@@ -120,6 +124,7 @@ fn launch_windows(exe_path: &str, decision: &RouteDecision) -> Result<()> {
         .context("browser launcher exited with failure")
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn chromium_profile_arg(browser_id: &str, profile: Option<&str>) -> Option<String> {
     if !is_chromium_browser(browser_id) {
         return None;
