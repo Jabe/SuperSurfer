@@ -61,6 +61,12 @@ jobs:
       - name: Verify artifact
         run: test -f dist/supersurfer.exe
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supersurfer-windows
+          path: dist/supersurfer.exe
+          if-no-files-found: error
+
   build-macos:
     name: Build macOS
     runs-on: macos-14
@@ -81,3 +87,12 @@ jobs:
 
       - name: Verify artifact
         run: test -f dist/SuperSurfer.app/Contents/MacOS/supersurfer-bin
+
+      - name: Archive app bundle
+        run: ditto -c -k --sequesterRsrc --keepParent dist/SuperSurfer.app dist/SuperSurfer.app.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supersurfer-macos
+          path: dist/SuperSurfer.app.zip
+          if-no-files-found: error
