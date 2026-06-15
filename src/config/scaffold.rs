@@ -119,7 +119,7 @@ mod tests {
         let config = render(&plan);
         assert!(config.contains(r#"defaultBrowser: "brave""#));
         assert!(config.contains("handlers: []"));
-        assert!(!config.contains("github.com"));
+        assert!(!config.contains("example.com"));
         assert!(!config.contains("zoom.us"));
         assert!(!config.contains("Slack"));
     }

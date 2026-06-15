@@ -88,9 +88,11 @@ fn unwrap_once(url: &mut Url) -> bool {
 
 fn is_teams_safelinks(url: &Url) -> bool {
     let host = url.host_str().unwrap_or_default().to_lowercase();
-    let path = url.path();
-    (host == "statics.teams.cdn.office.net" || host == "teams.public.onecdn.static.microsoft")
-        && path.contains("atp-safelinks")
+    let path = url.path().to_lowercase();
+    let teams_host = host.ends_with(".teams.cdn.office.net")
+        || host == "teams.public.onecdn.static.microsoft";
+    let safelink_path = path.contains("/safelinks/") || path.contains("atp-safelinks");
+    teams_host && safelink_path
 }
 
 fn is_facebook_linkshim(url: &Url) -> bool {
@@ -192,16 +194,24 @@ mod tests {
     #[test]
     fn unwraps_google_redirect() {
         assert_eq!(
-            unwrap("https://www.google.com/url?q=https%3A%2F%2Fgithub.com%2F&sa=U"),
-            "https://github.com/"
+            unwrap("https://www.google.com/url?q=https%3A%2F%2Fexample.org%2F&sa=U"),
+            "https://example.org/"
         );
     }
 
     #[test]
     fn unwraps_outlook_safelinks() {
         assert_eq!(
-            unwrap("https://safelinks.protection.outlook.com/?url=https%3A%2F%2Fgitlab.realmjoin.com%2F&data=1"),
-            "https://gitlab.realmjoin.com/"
+            unwrap("https://safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.org%2Fpage&data=1"),
+            "https://example.org/page"
+        );
+    }
+
+    #[test]
+    fn unwraps_teams_onecdn_host() {
+        assert_eq!(
+            unwrap("https://teams.public.onecdn.static.microsoft/evergreen-assets/safelinks/2/atp-safelinks.html?url=https%3A%2F%2Fexample.com%2Fpath%2F&locale=en-gb"),
+            "https://example.com/path/"
         );
     }
 
@@ -216,8 +226,8 @@ mod tests {
     #[test]
     fn unwraps_redirect_url_email() {
         assert_eq!(
-            unwrap("https://redirect-url.email/?link=https%3A%2F%2Fkeepersecurity.com%2Fvault"),
-            "https://keepersecurity.com/vault"
+            unwrap("https://redirect-url.email/?link=https%3A%2F%2Fexample.com%2Ftarget"),
+            "https://example.com/target"
         );
     }
 

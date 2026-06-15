@@ -3,6 +3,8 @@ use directories::ProjectDirs;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
 pub fn log_dir() -> Result<PathBuf> {
     let dirs = ProjectDirs::from("", "", "SuperSurfer")
@@ -22,7 +24,10 @@ pub fn append_decision(line: &str) -> Result<()> {
         .create(true)
         .append(true)
         .open(&path)?;
-    writeln!(file, "{line}")?;
+    let timestamp = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "unknown-time".to_string());
+    writeln!(file, "{timestamp} {line}")?;
     Ok(())
 }
 

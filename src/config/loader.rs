@@ -72,7 +72,7 @@ mod tests {
             "match: (url, ctx) => ctx.opener?.name === 'Slack'"
         ));
         assert!(!references_opener_context(
-            "match: (url) => url.hostname === 'github.com'"
+            "match: (url) => url.hostname === 'example.com'"
         ));
     }
 }

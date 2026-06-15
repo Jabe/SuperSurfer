@@ -50,7 +50,7 @@ impl Router {
         let cleaning_mode = self.config.runtime.url_cleaning_mode()?;
         url_clean::clean_url(&mut url, &cleaning_mode)?;
 
-        let (target, url) = match self.config.runtime.route(&url, context)? {
+        let (target, routed_url) = match self.config.runtime.route(&url, context)? {
             (Some(target), rewritten) => (target, rewritten),
             (None, rewritten) => (
                 BrowserTarget {
@@ -68,7 +68,7 @@ impl Router {
 
         let decision = RouteDecision {
             input_url,
-            cleaned_url: url.to_string(),
+            cleaned_url: routed_url.to_string(),
             browser_id,
             browser,
             profile,
