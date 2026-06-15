@@ -72,7 +72,7 @@ OS URL event → SuperSurfer (Rust)
 
 ## Status
 
-This is an initial implementation of the [browser router spec](./browser-router-spec.md):
+This is an initial implementation of the browser router spec:
 
 - Rust core with QuickJS sandboxed config runtime
 - TypeScript config via lightweight type-stripping + cache
