@@ -12,6 +12,7 @@ use url::Url;
 pub struct RouteDecision {
     pub input_url: String,
     pub cleaned_url: String,
+    pub browser_id: String,
     pub browser: String,
     pub profile: Option<String>,
     pub profile_directory: Option<String>,
@@ -61,12 +62,13 @@ impl Router {
             ),
         };
 
-        let (browser, profile, profile_directory, private, app_path, matched_handler, fallback) =
+        let (browser_id, browser, profile, profile_directory, private, app_path, matched_handler, fallback) =
             self.resolve_target(target)?;
 
         let decision = RouteDecision {
             input_url,
             cleaned_url: url.to_string(),
+            browser_id,
             browser,
             profile,
             profile_directory,
@@ -107,6 +109,7 @@ impl Router {
         target: BrowserTarget,
     ) -> Result<(
         String,
+        String,
         Option<String>,
         Option<String>,
         bool,
@@ -116,20 +119,38 @@ impl Router {
     )> {
         if let Some(app) = target.app {
             let name = target.name.unwrap_or_else(|| "custom-app".to_string());
-            return Ok((name, None, None, target.private, Some(app), true, false));
+            return Ok((
+                name.clone(),
+                name,
+                None,
+                None,
+                target.private,
+                Some(app),
+                true,
+                false,
+            ));
         }
 
         #[cfg(target_os = "windows")]
         if let Some(exe) = target.exe {
             let name = target.name.unwrap_or_else(|| "custom-exe".to_string());
-            return Ok((name, None, None, target.private, Some(exe), true, false));
+            return Ok((
+                name.clone(),
+                name,
+                None,
+                None,
+                target.private,
+                Some(exe),
+                true,
+                false,
+            ));
         }
 
         let spec = target
             .name
             .context("browser target did not specify a browser name")?;
-        let (browser, profile) = parse_browser_spec(&spec);
-        let resolved = match self.registry.resolve(&browser, profile.as_deref()) {
+        let (browser_id, profile) = parse_browser_spec(&spec);
+        let resolved = match self.registry.resolve(&browser_id, profile.as_deref()) {
             Ok(resolved) => resolved,
             Err(err) => {
                 eprintln!("browser resolution failed: {err}. Falling back to defaultBrowser.");
@@ -137,6 +158,7 @@ impl Router {
                 let (fb_browser, fb_profile) = parse_browser_spec(&fallback_spec);
                 let resolved = self.registry.resolve(&fb_browser, fb_profile.as_deref())?;
                 return Ok((
+                    resolved.id.clone(),
                     resolved.display_name.clone(),
                     resolved.profile.clone(),
                     resolved.profile_directory.clone(),
@@ -149,6 +171,7 @@ impl Router {
         };
 
         Ok((
+            resolved.id.clone(),
             resolved.display_name.clone(),
             resolved.profile.clone(),
             resolved.profile_directory.clone(),
@@ -162,8 +185,14 @@ impl Router {
 
 fn parse_browser_spec(spec: &str) -> (String, Option<String>) {
     if let Some((browser, profile)) = spec.split_once(':') {
-        (browser.to_string(), Some(profile.to_string()))
+        (
+            crate::browser::registry::normalize_browser_id(browser).to_string(),
+            Some(profile.to_string()),
+        )
     } else {
-        (spec.to_string(), None)
+        (
+            crate::browser::registry::normalize_browser_id(spec).to_string(),
+            None,
+        )
     }
 }

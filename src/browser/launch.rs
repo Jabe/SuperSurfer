@@ -1,4 +1,4 @@
-use crate::browser::registry::BrowserRegistry;
+use crate::browser::registry::{is_chromium_browser, is_gecko_browser, BrowserRegistry};
 use crate::routing::RouteDecision;
 use anyhow::{Context as _, Result};
 use std::process::Command;
@@ -29,12 +29,11 @@ fn launch_macos(app_path: &str, decision: &RouteDecision) -> Result<()> {
     cmd.arg("-a").arg(app_path);
 
     let mut args = Vec::new();
-    if let Some(profile_dir) =
-        chromium_profile_arg(&decision.browser, decision.profile_directory.as_deref())
+    if let Some(profile_dir) = chromium_profile_arg(decision.browser_id.as_str(), decision.profile_directory.as_deref())
     {
         args.push(profile_dir);
     } else if let Some(profile) = decision.profile.as_deref() {
-        if decision.browser.to_lowercase().contains("firefox") {
+        if is_gecko_browser(decision.browser_id.as_str()) {
             args.push("-P".to_string());
             args.push(profile.to_string());
         }
@@ -60,8 +59,7 @@ fn launch_macos(app_path: &str, decision: &RouteDecision) -> Result<()> {
 #[cfg(target_os = "windows")]
 fn launch_windows(exe_path: &str, decision: &RouteDecision) -> Result<()> {
     let mut cmd = Command::new(exe_path);
-    if let Some(profile_dir) =
-        chromium_profile_arg(&decision.browser, decision.profile_directory.as_deref())
+    if let Some(profile_dir) = chromium_profile_arg(decision.browser_id.as_str(), decision.profile_directory.as_deref())
     {
         cmd.arg(profile_dir);
     }
@@ -76,13 +74,8 @@ fn launch_windows(exe_path: &str, decision: &RouteDecision) -> Result<()> {
         .context("browser launcher exited with failure")
 }
 
-fn chromium_profile_arg(browser: &str, profile: Option<&str>) -> Option<String> {
-    let id = browser.to_lowercase();
-    if !id.contains("chrome")
-        && !id.contains("edge")
-        && !id.contains("brave")
-        && !id.contains("arc")
-    {
+fn chromium_profile_arg(browser_id: &str, profile: Option<&str>) -> Option<String> {
+    if !is_chromium_browser(browser_id) {
         return None;
     }
     profile.map(|dir| format!("--profile-directory={dir}"))

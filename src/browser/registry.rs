@@ -4,6 +4,13 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfileKind {
+    None,
+    Gecko,
+    Chromium,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserProfile {
     pub name: String,
@@ -22,6 +29,7 @@ pub struct BrowserInstall {
 
 #[derive(Debug, Clone)]
 pub struct ResolvedBrowser {
+    pub id: String,
     pub display_name: String,
     pub app_path: Option<String>,
     pub profile: Option<String>,
@@ -65,6 +73,7 @@ impl BrowserRegistry {
         });
 
         Ok(ResolvedBrowser {
+            id: install.id.clone(),
             display_name: install.display_name.clone(),
             app_path: install.app_path.clone(),
             profile: profile.map(str::to_string),
@@ -76,52 +85,331 @@ impl BrowserRegistry {
     }
 }
 
+pub fn is_chromium_browser(id: &str) -> bool {
+    known_browsers()
+        .into_iter()
+        .find(|b| b.id == id)
+        .is_some_and(|b| b.profile_kind == ProfileKind::Chromium)
+}
+
+pub fn is_gecko_browser(id: &str) -> bool {
+    known_browsers()
+        .into_iter()
+        .find(|b| b.id == id)
+        .is_some_and(|b| b.profile_kind == ProfileKind::Gecko)
+}
+
+pub fn normalize_browser_id(name: &str) -> &str {
+    let lower = name.to_lowercase();
+    for spec in known_browsers() {
+        if spec.id == lower || spec.display_name.to_lowercase() == lower {
+            return spec.id;
+        }
+        for alias in spec.aliases {
+            if alias.eq_ignore_ascii_case(name) {
+                return spec.id;
+            }
+        }
+    }
+    name
+}
+
 struct KnownBrowser {
     id: &'static str,
     display_name: &'static str,
+    aliases: &'static [&'static str],
     mac_app_names: &'static [&'static str],
     mac_bundle_ids: &'static [&'static str],
+    profile_kind: ProfileKind,
+    chromium_data_dir: Option<&'static str>,
+    gecko_profiles_ini: Option<&'static str>,
 }
 
 fn known_browsers() -> Vec<KnownBrowser> {
     vec![
-        KnownBrowser {
-            id: "safari",
-            display_name: "Safari",
-            mac_app_names: &["Safari.app"],
-            mac_bundle_ids: &["com.apple.Safari"],
-        },
-        KnownBrowser {
-            id: "chrome",
-            display_name: "Google Chrome",
-            mac_app_names: &["Google Chrome.app"],
-            mac_bundle_ids: &["com.google.Chrome"],
-        },
-        KnownBrowser {
-            id: "firefox",
-            display_name: "Firefox",
-            mac_app_names: &["Firefox.app"],
-            mac_bundle_ids: &["org.mozilla.firefox"],
-        },
-        KnownBrowser {
-            id: "edge",
-            display_name: "Microsoft Edge",
-            mac_app_names: &["Microsoft Edge.app"],
-            mac_bundle_ids: &["com.microsoft.edgemac"],
-        },
-        KnownBrowser {
-            id: "brave",
-            display_name: "Brave Browser",
-            mac_app_names: &["Brave Browser.app"],
-            mac_bundle_ids: &["com.brave.Browser"],
-        },
-        KnownBrowser {
-            id: "arc",
-            display_name: "Arc",
-            mac_app_names: &["Arc.app"],
-            mac_bundle_ids: &["company.thebrowser.Browser"],
-        },
+        browser(
+            "safari",
+            "Safari",
+            &[],
+            &["Safari.app"],
+            &["com.apple.Safari"],
+            ProfileKind::None,
+            None,
+            None,
+        ),
+        browser(
+            "chrome",
+            "Google Chrome",
+            &["Chrome"],
+            &["Google Chrome.app"],
+            &["com.google.Chrome"],
+            ProfileKind::Chromium,
+            Some("Google/Chrome"),
+            None,
+        ),
+        browser(
+            "chrome-canary",
+            "Google Chrome Canary",
+            &["Chrome Canary"],
+            &["Google Chrome Canary.app"],
+            &["com.google.Chrome.canary"],
+            ProfileKind::Chromium,
+            Some("Google/Chrome Canary"),
+            None,
+        ),
+        browser(
+            "chromium",
+            "Chromium",
+            &[],
+            &["Chromium.app"],
+            &["org.chromium.Chromium"],
+            ProfileKind::Chromium,
+            Some("Chromium"),
+            None,
+        ),
+        browser(
+            "firefox",
+            "Firefox",
+            &[],
+            &["Firefox.app"],
+            &["org.mozilla.firefox"],
+            ProfileKind::Gecko,
+            None,
+            Some("Firefox/profiles.ini"),
+        ),
+        browser(
+            "firefox-developer-edition",
+            "Firefox Developer Edition",
+            &["Firefox Developer Edition", "Firefox Dev"],
+            &["Firefox Developer Edition.app"],
+            &["org.mozilla.firefoxdeveloperedition"],
+            ProfileKind::Gecko,
+            None,
+            Some("Firefox/profiles.ini"),
+        ),
+        browser(
+            "zen",
+            "Zen",
+            &["Zen Browser"],
+            &["Zen.app", "Zen Browser.app"],
+            &["app.zen-browser.zen"],
+            ProfileKind::Gecko,
+            None,
+            Some("zen/profiles.ini"),
+        ),
+        browser(
+            "waterfox",
+            "Waterfox",
+            &[],
+            &["Waterfox.app"],
+            &["org.waterfox.waterfox"],
+            ProfileKind::Gecko,
+            None,
+            Some("Waterfox/profiles.ini"),
+        ),
+        browser(
+            "tor",
+            "Tor Browser",
+            &["Tor"],
+            &["Tor Browser.app"],
+            &["org.torproject.torbrowser"],
+            ProfileKind::Gecko,
+            None,
+            Some("Tor Browser/Browser/TorBrowser/Data/Browser/profiles.ini"),
+        ),
+        browser(
+            "edge",
+            "Microsoft Edge",
+            &["Edge"],
+            &["Microsoft Edge.app"],
+            &["com.microsoft.edgemac"],
+            ProfileKind::Chromium,
+            Some("Microsoft Edge"),
+            None,
+        ),
+        browser(
+            "edge-beta",
+            "Microsoft Edge Beta",
+            &["Edge Beta"],
+            &["Microsoft Edge Beta.app"],
+            &["com.microsoft.edgemac.Beta"],
+            ProfileKind::Chromium,
+            Some("Microsoft Edge Beta"),
+            None,
+        ),
+        browser(
+            "edge-canary",
+            "Microsoft Edge Canary",
+            &["Edge Canary"],
+            &["Microsoft Edge Canary.app"],
+            &["com.microsoft.edgemac.Canary"],
+            ProfileKind::Chromium,
+            Some("Microsoft Edge Canary"),
+            None,
+        ),
+        browser(
+            "brave",
+            "Brave Browser",
+            &["Brave"],
+            &["Brave Browser.app"],
+            &["com.brave.Browser"],
+            ProfileKind::Chromium,
+            Some("BraveSoftware/Brave-Browser"),
+            None,
+        ),
+        browser(
+            "brave-beta",
+            "Brave Browser Beta",
+            &["Brave Beta"],
+            &["Brave Browser Beta.app"],
+            &["com.brave.Browser.beta"],
+            ProfileKind::Chromium,
+            Some("BraveSoftware/Brave-Browser-Beta"),
+            None,
+        ),
+        browser(
+            "brave-nightly",
+            "Brave Browser Nightly",
+            &["Brave Nightly"],
+            &["Brave Browser Nightly.app"],
+            &["com.brave.Browser.nightly"],
+            ProfileKind::Chromium,
+            Some("BraveSoftware/Brave-Browser-Nightly"),
+            None,
+        ),
+        browser(
+            "arc",
+            "Arc",
+            &[],
+            &["Arc.app"],
+            &["company.thebrowser.Browser"],
+            ProfileKind::Chromium,
+            Some("Arc/User Data"),
+            None,
+        ),
+        browser(
+            "dia",
+            "Dia",
+            &[],
+            &["Dia.app"],
+            &["company.thebrowser.dia"],
+            ProfileKind::Chromium,
+            Some("Dia/User Data"),
+            None,
+        ),
+        browser(
+            "vivaldi",
+            "Vivaldi",
+            &[],
+            &["Vivaldi.app"],
+            &["com.vivaldi.Vivaldi"],
+            ProfileKind::Chromium,
+            Some("Vivaldi"),
+            None,
+        ),
+        browser(
+            "opera",
+            "Opera",
+            &[],
+            &["Opera.app"],
+            &["com.operasoftware.Opera"],
+            ProfileKind::Chromium,
+            Some("com.operasoftware.Opera"),
+            None,
+        ),
+        browser(
+            "opera-gx",
+            "Opera GX",
+            &["OperaGX"],
+            &["Opera GX.app"],
+            &["com.operasoftware.OperaGX"],
+            ProfileKind::Chromium,
+            Some("com.operasoftware.OperaGX"),
+            None,
+        ),
+        browser(
+            "orion",
+            "Orion",
+            &["Orion Browser"],
+            &["Orion.app", "Orion Browser.app"],
+            &["com.kagi.kagimacOS"],
+            ProfileKind::Chromium,
+            Some("Orion/Data"),
+            None,
+        ),
+        browser(
+            "sigmaos",
+            "SigmaOS",
+            &["Sigma OS"],
+            &["SigmaOS.app"],
+            &["com.sigmaos.sigmaosmacos"],
+            ProfileKind::Chromium,
+            Some("SigmaOS"),
+            None,
+        ),
+        browser(
+            "sidekick",
+            "Sidekick",
+            &[],
+            &["Sidekick.app"],
+            &["com.pushplaylabs.sidekick"],
+            ProfileKind::Chromium,
+            Some("Sidekick"),
+            None,
+        ),
+        browser(
+            "helium",
+            "Helium",
+            &[],
+            &["Helium.app"],
+            &["com.imput.helium"],
+            ProfileKind::Chromium,
+            Some("Helium"),
+            None,
+        ),
+        browser(
+            "wavebox",
+            "Wavebox",
+            &[],
+            &["Wavebox.app"],
+            &["com.bookry.wavebox"],
+            ProfileKind::Chromium,
+            Some("Wavebox"),
+            None,
+        ),
+        browser(
+            "ungoogled-chromium",
+            "Ungoogled Chromium",
+            &["Ungoogled-Chromium"],
+            &["Chromium.app", "Ungoogled Chromium.app"],
+            &["org.ungoogled.chromium"],
+            ProfileKind::Chromium,
+            Some("Chromium"),
+            None,
+        ),
     ]
+}
+
+fn browser(
+    id: &'static str,
+    display_name: &'static str,
+    aliases: &'static [&'static str],
+    mac_app_names: &'static [&'static str],
+    mac_bundle_ids: &'static [&'static str],
+    profile_kind: ProfileKind,
+    chromium_data_dir: Option<&'static str>,
+    gecko_profiles_ini: Option<&'static str>,
+) -> KnownBrowser {
+    KnownBrowser {
+        id,
+        display_name,
+        aliases,
+        mac_app_names,
+        mac_bundle_ids,
+        profile_kind,
+        chromium_data_dir,
+        gecko_profiles_ini,
+    }
 }
 
 fn discover_browser(spec: &KnownBrowser) -> Result<Option<BrowserInstall>> {
@@ -159,8 +447,9 @@ fn discover_browser_macos(spec: &KnownBrowser) -> Result<Option<BrowserInstall>>
         return Ok(None);
     };
 
-    let bundle_id = read_bundle_id(&app_path).or_else(|| spec.mac_bundle_ids.first().map(|s| s.to_string()));
-    let profiles = discover_profiles(&spec.id, &app_path)?;
+    let bundle_id = read_bundle_id(&app_path)
+        .or_else(|| spec.mac_bundle_ids.first().map(|s| s.to_string()));
+    let profiles = discover_profiles(spec, &app_path)?;
 
     Ok(Some(BrowserInstall {
         id: spec.id.to_string(),
@@ -190,27 +479,34 @@ fn read_bundle_id(app_path: &Path) -> Option<String> {
 }
 
 #[cfg(target_os = "macos")]
-fn discover_profiles(browser_id: &str, app_path: &Path) -> Result<Vec<BrowserProfile>> {
+fn discover_profiles(spec: &KnownBrowser, _app_path: &Path) -> Result<Vec<BrowserProfile>> {
     let home = directories::UserDirs::new()
         .map(|u| u.home_dir().to_path_buf())
         .context("no home directory")?;
-    match browser_id {
-        "firefox" => discover_firefox_profiles(&home),
-        "chrome" | "edge" | "brave" | "arc" => {
-            discover_chromium_profiles(browser_id, &home, app_path)
+
+    match spec.profile_kind {
+        ProfileKind::None => Ok(vec![]),
+        ProfileKind::Gecko => {
+            let Some(relative) = spec.gecko_profiles_ini else {
+                return Ok(vec![]);
+            };
+            discover_gecko_profiles(&home.join("Library/Application Support").join(relative))
         }
-        _ => Ok(vec![]),
+        ProfileKind::Chromium => {
+            let Some(relative) = spec.chromium_data_dir else {
+                return Ok(vec![]);
+            };
+            discover_chromium_profiles(&home.join("Library/Application Support").join(relative))
+        }
     }
 }
 
 #[cfg(target_os = "macos")]
-fn discover_firefox_profiles(home: &Path) -> Result<Vec<BrowserProfile>> {
-    let ini_path = home
-        .join("Library/Application Support/Firefox/profiles.ini");
+fn discover_gecko_profiles(ini_path: &Path) -> Result<Vec<BrowserProfile>> {
     if !ini_path.exists() {
         return Ok(vec![]);
     }
-    let content = fs::read_to_string(&ini_path)?;
+    let content = fs::read_to_string(ini_path)?;
     let mut profiles = Vec::new();
     let mut current_name = None;
     let mut current_path = None;
@@ -240,18 +536,7 @@ fn discover_firefox_profiles(home: &Path) -> Result<Vec<BrowserProfile>> {
 }
 
 #[cfg(target_os = "macos")]
-fn discover_chromium_profiles(
-    browser_id: &str,
-    home: &Path,
-    _app_path: &Path,
-) -> Result<Vec<BrowserProfile>> {
-    let support_dir = match browser_id {
-        "chrome" => home.join("Library/Application Support/Google/Chrome"),
-        "edge" => home.join("Library/Application Support/Microsoft Edge"),
-        "brave" => home.join("Library/Application Support/BraveSoftware/Brave-Browser"),
-        "arc" => home.join("Library/Application Support/Arc/User Data"),
-        _ => return Ok(vec![]),
-    };
+fn discover_chromium_profiles(support_dir: &Path) -> Result<Vec<BrowserProfile>> {
     let state_path = support_dir.join("Local State");
     if !state_path.exists() {
         return Ok(vec![]);
@@ -277,4 +562,25 @@ fn discover_chromium_profiles(
         }
     }
     Ok(profiles)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_common_display_names() {
+        assert_eq!(normalize_browser_id("Google Chrome"), "chrome");
+        assert_eq!(normalize_browser_id("Brave Browser"), "brave");
+        assert_eq!(normalize_browser_id("Firefox Developer Edition"), "firefox-developer-edition");
+        assert_eq!(normalize_browser_id("Opera GX"), "opera-gx");
+    }
+
+    #[test]
+    fn classifies_chromium_browsers() {
+        assert!(is_chromium_browser("vivaldi"));
+        assert!(is_chromium_browser("opera-gx"));
+        assert!(!is_chromium_browser("firefox"));
+        assert!(!is_chromium_browser("safari"));
+    }
 }

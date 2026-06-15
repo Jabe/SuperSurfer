@@ -105,7 +105,7 @@ impl ScriptRuntime {
                 let browser_value: Value = handler.get("browser")?;
                 let matcher: Value = handler.get("match")?;
                 if eval_match(&ctx, matcher, &current, context)? {
-                    return Ok(Some(parse_browser_target(browser_value)?));
+                    return Ok(Some(resolve_browser_target(&ctx, browser_value, &current)?));
                 }
             }
             Ok(None)
@@ -126,8 +126,15 @@ fn apply_rewrite<'js>(
         if eval_match(ctx, matcher, &url.borrow(), context)? {
             let transform: Function = rule.get("url")?;
             let url_obj = make_url_object(ctx, &url.borrow())?;
-            if let Err(err) = transform.call::<_, ()>((url_obj,)) {
-                eprintln!("rewrite rule skipped: {err}");
+            match transform.call::<_, Value>((url_obj,)) {
+                Ok(result) => {
+                    if let Some(next) = result.as_string() {
+                        if let Ok(parsed) = Url::parse(&next.to_string()?) {
+                            *url.borrow_mut() = parsed;
+                        }
+                    }
+                }
+                Err(err) => eprintln!("rewrite rule skipped: {err}"),
             }
         }
     }
@@ -148,10 +155,24 @@ fn eval_match<'js>(
         .context("matcher evaluation failed")
 }
 
+fn resolve_browser_target<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    value: Value<'js>,
+    url: &Url,
+) -> Result<BrowserTarget> {
+    if value.is_function() {
+        let func = value.as_function().context("expected browser function")?;
+        let url_obj = make_url_object(ctx, url)?;
+        let result: Value = func.call((url_obj,))?;
+        return parse_browser_target(result);
+    }
+    parse_browser_target(value)
+}
+
 fn parse_browser_target(value: Value<'_>) -> Result<BrowserTarget> {
     if let Some(name) = value.as_string() {
         return Ok(BrowserTarget {
-            name: Some(name.to_string()?),
+            name: Some(map_browser_name(&name.to_string()?)?),
             private: false,
             app: None,
             exe: None,
@@ -161,6 +182,21 @@ fn parse_browser_target(value: Value<'_>) -> Result<BrowserTarget> {
     let obj = value
         .as_object()
         .context("browser target must be a string or object")?;
+
+    if let Ok(display_name) = obj.get::<_, String>("name") {
+        let profile: Option<String> = obj.get("profile").ok();
+        let id = map_browser_name(&display_name)?;
+        let spec = match profile {
+            Some(profile) => format!("{id}:{profile}"),
+            None => id,
+        };
+        return Ok(BrowserTarget {
+            name: Some(spec),
+            private: false,
+            app: None,
+            exe: None,
+        });
+    }
 
     let browser: Option<String> = obj.get("browser").ok();
     let private: bool = obj.get("private").unwrap_or(false);
@@ -173,6 +209,13 @@ fn parse_browser_target(value: Value<'_>) -> Result<BrowserTarget> {
         app,
         exe,
     })
+}
+
+fn map_browser_name(display_name: &str) -> Result<String> {
+    if display_name.to_lowercase().ends_with(".app") {
+        return Ok(display_name.to_string());
+    }
+    Ok(crate::browser::registry::normalize_browser_id(display_name).to_string())
 }
 
 fn install_host_functions(globals: &Object<'_>) -> Result<()> {
@@ -222,6 +265,7 @@ fn make_url_object<'js>(ctx: &rquickjs::Ctx<'js>, url: &Url) -> Result<Object<'j
     obj.set("href", url.as_str())?;
     obj.set("protocol", url.scheme())?;
     obj.set("hostname", url.host_str().unwrap_or(""))?;
+    obj.set("port", url.port().unwrap_or_default())?;
     obj.set("pathname", url.path())?;
     obj.set(
         "search",

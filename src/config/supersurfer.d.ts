@@ -26,11 +26,6 @@ export interface RewriteRule {
   url: (url: URL) => void;
 }
 
-export interface HandlerRule {
-  match: Matcher;
-  browser: BrowserTarget;
-}
-
 export type BrowserTarget =
   | string
   | {
@@ -38,11 +33,20 @@ export type BrowserTarget =
       private?: boolean;
     }
   | {
+      name: string;
+      profile?: string;
+    }
+  | {
       app: string;
     }
   | {
       exe: string;
     };
+
+export interface HandlerRule {
+  match: Matcher;
+  browser: BrowserTarget | ((url: URL) => BrowserTarget);
+}
 
 export interface RouterConfig {
   defaultBrowser: string;
