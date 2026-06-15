@@ -7,6 +7,16 @@ func routerBinary() -> URL {
         .appendingPathComponent("supersurfer-bin")
 }
 
+func isRoutableInput(_ value: String) -> Bool {
+    if value.hasPrefix("http://") || value.hasPrefix("https://") || value.hasPrefix("file://") {
+        return true
+    }
+    if value.hasPrefix("/") || value.hasPrefix("~/") {
+        return true
+    }
+    return false
+}
+
 func runRouter(with urls: [String]) {
     for url in urls {
         let process = Process()
@@ -39,8 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args = cliArgs()
-        let urls = args.filter { $0.hasPrefix("http://") || $0.hasPrefix("https://") }
-        let commands = args.filter { !$0.hasPrefix("http://") && !$0.hasPrefix("https://") }
+        let urls = args.filter(isRoutableInput)
+        let commands = args.filter { !isRoutableInput($0) }
 
         if !urls.isEmpty {
             finished = true
@@ -56,7 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        // Default-browser mode: wait briefly for an incoming http(s) URL event.
+        // Default-browser mode: wait briefly for an incoming URL or file event.
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
             guard let self, !self.finished else { return }
             self.finished = true
@@ -66,11 +76,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         finished = true
-        let http = urls.map(\.absoluteString).filter {
-            $0.hasPrefix("http://") || $0.hasPrefix("https://")
-        }
-        if !http.isEmpty {
-            runRouter(with: http)
+        let routable = urls.map(\.absoluteString).filter(isRoutableInput)
+        if !routable.isEmpty {
+            runRouter(with: routable)
         }
         NSApp.terminate(nil)
     }

@@ -37,7 +37,7 @@ Config lives at:
 import type { RouterConfig } from "./supersurfer";
 
 export default {
-  defaultBrowser: "safari",
+  defaultBrowser: "chrome",
   urlCleaning: "default",
   handlers: [
     { match: domain("github.com"), browser: "chrome" },
@@ -65,15 +65,20 @@ The bundle contains a small Cocoa launcher (`SuperSurfer`) that receives `http`/
 
 ### Windows — `supersurfer.exe`
 
-On a Windows machine (or cross-compile with `rustup target add x86_64-pc-windows-msvc`):
+On Windows, or cross-compile from macOS/Linux (`mise` installs `zig`; first run may install `cargo-zigbuild`):
+
+```bash
+mise run package-windows
+```
+
+On Windows:
 
 ```powershell
-mise run package-windows
 .\dist\supersurfer.exe init --register
 .\dist\supersurfer.exe test https://github.com/foo
 ```
 
-`init --register` writes the `StartMenuInternet` registry entries so SuperSurfer appears under **Settings → Default apps → Web browser**.
+`init --register` writes `StartMenuInternet` registry entries so SuperSurfer appears in **Settings → Apps → Default apps**. Search for SuperSurfer, open it, then click **Set default** (or assign HTTP, HTTPS, `.htm`, and `.html` individually). The old “Web browser” picker was removed in Windows 11.
 
 ## CLI
 
@@ -112,7 +117,7 @@ This is an initial implementation of the browser router spec:
 - macOS browser discovery + launch
 - CLI: `init`, `doctor`, `test`, `logs`
 
-**Not yet implemented:** Windows browser discovery, signed/notarized distribution, signed rules updates.
+**Not yet implemented:** signed/notarized distribution, signed rules updates.
 
 ## License
 

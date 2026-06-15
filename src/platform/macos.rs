@@ -1,5 +1,7 @@
+use crate::browser::registry::BrowserRegistry;
 use crate::context::Opener;
 use anyhow::{Context as _, Result};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -72,6 +74,45 @@ pub fn register_default_browser() -> Result<()> {
     open_default_browser_settings();
     println!("Choose SuperSurfer under Default web browser (quit and reopen System Settings if it is missing).");
     Ok(())
+}
+
+pub fn system_default_browser_id(registry: &BrowserRegistry) -> Option<String> {
+    let bundle_id = system_default_bundle_id("https")
+        .or_else(|| system_default_bundle_id("http"))?;
+    registry.id_for_bundle_id(&bundle_id)
+}
+
+fn system_default_bundle_id(scheme: &str) -> Option<String> {
+    let home = directories::UserDirs::new()?.home_dir().to_path_buf();
+    let path = home.join("Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist");
+    let file = fs::File::open(path).ok()?;
+    let value: plist::Value = plist::from_reader(file).ok()?;
+    let handlers = value.as_dictionary()?.get("LSHandlers")?.as_array()?;
+
+    for handler in handlers {
+        let handler_dict = handler.as_dictionary()?;
+        let handler_scheme = handler_dict
+            .get("LSHandlerURLScheme")
+            .and_then(|value| value.as_string());
+        if handler_scheme != Some(scheme) {
+            continue;
+        }
+        if let Some(bundle) = handler_dict
+            .get("LSHandlerRoleAll")
+            .and_then(|value| value.as_string())
+        {
+            return Some(bundle.to_string());
+        }
+        if let Some(ids) = handler_dict
+            .get("LSHandlerPreferredIdentifiers")
+            .and_then(|value| value.as_array())
+        {
+            if let Some(bundle) = ids.first().and_then(|value| value.as_string()) {
+                return Some(bundle.to_string());
+            }
+        }
+    }
+    None
 }
 
 pub fn registration_status() -> String {

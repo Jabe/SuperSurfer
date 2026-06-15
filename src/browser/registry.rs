@@ -1,8 +1,16 @@
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;
+
+#[cfg(target_os = "windows")]
+#[path = "discover_windows.rs"]
+mod discover_windows;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProfileKind {
@@ -57,6 +65,23 @@ impl BrowserRegistry {
         let mut items: Vec<_> = self.browsers.values().collect();
         items.sort_by(|a, b| a.id.cmp(&b.id));
         items
+    }
+
+    pub fn id_for_bundle_id(&self, bundle_id: &str) -> Option<String> {
+        self.browsers.values().find_map(|install| {
+            install
+                .bundle_id
+                .as_deref()
+                .filter(|id| id.eq_ignore_ascii_case(bundle_id))
+                .map(|_| install.id.clone())
+        })
+        .or_else(|| browser_id_for_bundle_id(bundle_id).map(str::to_string))
+    }
+
+    pub fn id_for_prog_id(&self, prog_id: &str) -> Option<String> {
+        browser_id_for_prog_id(prog_id)
+            .map(str::to_string)
+            .filter(|id| self.browsers.contains_key(id))
     }
 
     pub fn resolve(&self, id: &str, profile: Option<&str>) -> Result<ResolvedBrowser> {
@@ -114,14 +139,73 @@ pub fn normalize_browser_id(name: &str) -> &str {
     name
 }
 
+pub fn browser_id_for_bundle_id(bundle_id: &str) -> Option<&'static str> {
+    for spec in known_browsers() {
+        for id in spec.mac_bundle_ids {
+            if id.eq_ignore_ascii_case(bundle_id) {
+                return Some(spec.id);
+            }
+        }
+    }
+    None
+}
+
+pub fn browser_id_for_prog_id(prog_id: &str) -> Option<&'static str> {
+    let lower = prog_id.to_ascii_lowercase();
+    if lower.contains("firefox") {
+        return Some("firefox");
+    }
+    if lower.contains("brave") {
+        if lower.contains("nightly") {
+            return Some("brave-nightly");
+        }
+        if lower.contains("beta") {
+            return Some("brave-beta");
+        }
+        return Some("brave");
+    }
+    if lower.contains("vivaldi") {
+        return Some("vivaldi");
+    }
+    if lower.contains("operagx") || (lower.contains("opera") && lower.contains("gx")) {
+        return Some("opera-gx");
+    }
+    if lower.contains("opera") {
+        return Some("opera");
+    }
+    if lower.contains("msedge") || lower.contains("edgehtm") || lower.contains("edge") {
+        if lower.contains("beta") {
+            return Some("edge-beta");
+        }
+        if lower.contains("canary") || lower.contains("sxs") {
+            return Some("edge-canary");
+        }
+        if lower.contains("dev") {
+            return Some("edge-dev");
+        }
+        return Some("edge");
+    }
+    if lower.contains("chrome") {
+        if lower.contains("sx") || lower.contains("canary") {
+            return Some("chrome-canary");
+        }
+        return Some("chrome");
+    }
+    None
+}
+
 struct KnownBrowser {
     id: &'static str,
     display_name: &'static str,
     aliases: &'static [&'static str],
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     mac_app_names: &'static [&'static str],
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     mac_bundle_ids: &'static [&'static str],
     profile_kind: ProfileKind,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     chromium_data_dir: Option<&'static str>,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     gecko_profiles_ini: Option<&'static str>,
 }
 
@@ -462,8 +546,7 @@ fn discover_browser_macos(spec: &KnownBrowser) -> Result<Option<BrowserInstall>>
 
 #[cfg(target_os = "windows")]
 fn discover_browser_windows(spec: &KnownBrowser) -> Result<Option<BrowserInstall>> {
-    let _ = spec;
-    Ok(None)
+    discover_windows::discover(spec)
 }
 
 #[cfg(target_os = "macos")]
@@ -501,7 +584,6 @@ fn discover_profiles(spec: &KnownBrowser, _app_path: &Path) -> Result<Vec<Browse
     }
 }
 
-#[cfg(target_os = "macos")]
 fn discover_gecko_profiles(ini_path: &Path) -> Result<Vec<BrowserProfile>> {
     if !ini_path.exists() {
         return Ok(vec![]);
@@ -535,7 +617,6 @@ fn discover_gecko_profiles(ini_path: &Path) -> Result<Vec<BrowserProfile>> {
     Ok(profiles)
 }
 
-#[cfg(target_os = "macos")]
 fn discover_chromium_profiles(support_dir: &Path) -> Result<Vec<BrowserProfile>> {
     let state_path = support_dir.join("Local State");
     if !state_path.exists() {
@@ -582,5 +663,13 @@ mod tests {
         assert!(is_chromium_browser("opera-gx"));
         assert!(!is_chromium_browser("firefox"));
         assert!(!is_chromium_browser("safari"));
+    }
+
+    #[test]
+    fn maps_windows_prog_ids() {
+        assert_eq!(browser_id_for_prog_id("ChromeHTML"), Some("chrome"));
+        assert_eq!(browser_id_for_prog_id("BraveHTML"), Some("brave"));
+        assert_eq!(browser_id_for_prog_id("MSEdgeHTM"), Some("edge"));
+        assert_eq!(browser_id_for_prog_id("FirefoxURL"), Some("firefox"));
     }
 }

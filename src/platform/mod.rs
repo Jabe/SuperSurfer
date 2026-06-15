@@ -11,6 +11,22 @@ pub use macos::app_bundle_path;
 #[cfg(target_os = "windows")]
 pub use windows::exe_path;
 
+pub fn system_default_browser_id(registry: &crate::browser::registry::BrowserRegistry) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        return macos::system_default_browser_id(registry);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return windows::system_default_browser_id(registry);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = registry;
+        None
+    }
+}
+
 pub fn detect_opener() -> Option<Opener> {
     #[cfg(target_os = "macos")]
     {

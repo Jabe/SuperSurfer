@@ -1,4 +1,6 @@
-use crate::browser::registry::{is_chromium_browser, is_gecko_browser, BrowserRegistry};
+use crate::browser::registry::{is_chromium_browser, BrowserRegistry};
+#[cfg(target_os = "macos")]
+use crate::browser::registry::is_gecko_browser;
 use crate::routing::RouteDecision;
 use anyhow::{Context as _, Result};
 use std::process::Command;
@@ -103,7 +105,7 @@ fn launch_windows(exe_path: &str, decision: &RouteDecision) -> Result<()> {
     if decision.private {
         cmd.arg("--inprivate");
     }
-    cmd.arg(&decision.cleaned_url);
+    cmd.arg(browser_launch_arg(&decision.cleaned_url));
     cmd.status()
         .context("failed to launch browser")?
         .success()
@@ -116,4 +118,16 @@ fn chromium_profile_arg(browser_id: &str, profile: Option<&str>) -> Option<Strin
         return None;
     }
     profile.map(|dir| format!("--profile-directory={dir}"))
+}
+
+fn browser_launch_arg(url: &str) -> String {
+    if !url.starts_with("file://") {
+        return url.to_string();
+    }
+    if let Ok(parsed) = url::Url::parse(url) {
+        if let Ok(path) = parsed.to_file_path() {
+            return path.to_string_lossy().into_owned();
+        }
+    }
+    url.to_string()
 }

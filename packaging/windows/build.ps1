@@ -17,4 +17,4 @@ Copy-Item -Force $Exe $Out
 
 Write-Host "Built $Out"
 Write-Host "Register: supersurfer.exe init --register"
-Write-Host "Or set Default apps -> Web browser -> SuperSurfer in Windows Settings"
+Write-Host "Then Settings -> Apps -> Default apps -> SuperSurfer -> Set default"

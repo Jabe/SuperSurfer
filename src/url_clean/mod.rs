@@ -18,6 +18,9 @@ static TRACKING_PARAMS: &[&str] = &[
 ];
 
 pub fn clean_url(url: &mut Url, mode: &str) -> anyhow::Result<()> {
+    if url.scheme() == "file" {
+        return Ok(());
+    }
     match mode {
         "off" => return Ok(()),
         "default" | _ => {

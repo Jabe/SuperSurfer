@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 pub mod cache;
 pub mod loader;
+pub mod scaffold;
 pub mod transpile;
 
 pub fn config_dir() -> Result<PathBuf> {
@@ -36,32 +37,11 @@ pub fn types_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("supersurfer.d.ts"))
 }
 
-pub fn example_config() -> &'static str {
-    r#"import type { RouterConfig } from "./supersurfer";
-
-export default {
-  defaultBrowser: "safari",
-  urlCleaning: "default",
-  handlers: [
-    { match: domain("github.com"), browser: "chrome" },
-    {
-      match: [host("meet.google.com"), suffix(".zoom.us")],
-      browser: "chrome:work",
-    },
-    {
-      match: (url, ctx) => ctx.opener?.name === "Slack",
-      browser: "firefox",
-    },
-  ],
-} satisfies RouterConfig;
-"#
-}
-
 pub fn types_stub() -> &'static str {
     include_str!("supersurfer.d.ts")
 }
 
-pub fn write_scaffold(force: bool) -> Result<PathBuf> {
+pub fn write_scaffold(force: bool) -> Result<(PathBuf, scaffold::ScaffoldPlan)> {
     let dir = config_dir()?;
     let config = dir.join("config.ts");
     let types = types_path()?;
@@ -74,8 +54,9 @@ pub fn write_scaffold(force: bool) -> Result<PathBuf> {
     }
 
     fs::write(&types, types_stub())?;
-    fs::write(&config, example_config())?;
-    Ok(config)
+    let plan = scaffold::plan()?;
+    fs::write(&config, scaffold::render(&plan))?;
+    Ok((config, plan))
 }
 
 pub fn read_config_source(path: &Path) -> Result<String> {

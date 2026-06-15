@@ -46,7 +46,7 @@ pub enum Commands {
 
 pub fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() == 1 && looks_like_url(&args[0]) {
+    if args.len() == 1 && crate::input_url::is_routable_input(&args[0]) {
         return platform::handle_url_arg(&args[0]);
     }
 
@@ -61,18 +61,15 @@ pub fn run() -> Result<()> {
     }
 }
 
-fn looks_like_url(arg: &str) -> bool {
-    arg.starts_with("http://") || arg.starts_with("https://")
-}
-
 fn cmd_init(register: bool, force: bool) -> Result<()> {
     let config_path = config::config_path()?;
     if config_path.exists() && !force {
         println!("Config already exists at {}", config_path.display());
     } else {
         let path = config::write_scaffold(force)?;
-        println!("Created config at {}", path.display());
+        println!("Created config at {}", path.0.display());
         println!("Created types at {}", config::types_path()?.display());
+        println!("Scaffolded from this machine: {}", config::scaffold::summary(&path.1));
     }
 
     if register {

@@ -1,3 +1,4 @@
+use crate::browser::registry::BrowserRegistry;
 use crate::context::Opener;
 use anyhow::{Context as _, Result};
 use std::path::PathBuf;
@@ -7,6 +8,7 @@ use winreg::RegKey;
 
 pub const APP_NAME: &str = "SuperSurfer";
 pub const PROG_ID: &str = "SuperSurferURL";
+pub const PROG_ID_HTML: &str = "SuperSurferHTML";
 
 pub fn detect_opener() -> Option<Opener> {
     let output = Command::new("powershell")
@@ -53,12 +55,30 @@ pub fn register_default_browser() -> Result<()> {
     let exe = exe_path()?;
     write_registry(&exe)?;
 
-    println!("Registered SuperSurfer in the Windows browser list.");
-    println!("Set it as default in Settings → Apps → Default apps → Web browser → SuperSurfer.");
+    println!("Registered SuperSurfer in the Windows default-apps list.");
+    println!(
+        "Settings → Apps → Default apps → SuperSurfer → Set default \
+         (or set HTTP, HTTPS, .htm, and .html individually)."
+    );
     let _ = Command::new("cmd")
-        .args(["/C", "start", "ms-settings:defaultapps"])
+        .args([
+            "/C",
+            "start",
+            "ms-settings:defaultapps?registeredAppUser=SuperSurfer",
+        ])
         .status();
     Ok(())
+}
+
+pub fn system_default_browser_id(registry: &BrowserRegistry) -> Option<String> {
+    let prog_id = system_default_prog_id("https").or_else(|| system_default_prog_id("http"))?;
+    registry.id_for_prog_id(&prog_id)
+}
+
+fn system_default_prog_id(scheme: &str) -> Option<String> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let path = format!(r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\{scheme}\UserChoice");
+    hkcu.open_subkey(path).ok()?.get_value("ProgId").ok()
 }
 
 pub fn registration_status() -> String {
@@ -91,8 +111,7 @@ fn write_registry(exe: &PathBuf) -> Result<()> {
         .0
         .set_value("", &command)?;
 
-    let (capabilities, _) =
-        clients.create_subkey("Capabilities")?;
+    let (capabilities, _) = clients.create_subkey("Capabilities")?;
     capabilities.set_value("ApplicationDescription", &"SuperSurfer browser router")?;
     capabilities.set_value("ApplicationIcon", &icon)?;
     capabilities.set_value("ApplicationName", &APP_NAME)?;
@@ -102,20 +121,39 @@ fn write_registry(exe: &PathBuf) -> Result<()> {
     url_assoc.set_value("http", &PROG_ID)?;
     url_assoc.set_value("https", &PROG_ID)?;
 
-    let (classes, _) = hkcu.create_subkey(format!("Software\\Classes\\{PROG_ID}"))?;
-    classes.set_value("", &APP_NAME)?;
-    classes.set_value("URL Protocol", &"")?;
-    classes.set_value("EditFlags", &0x00000002u32)?;
-    classes.set_value("FriendlyTypeName", &APP_NAME)?;
+    let (file_assoc, _) = capabilities.create_subkey("FileAssociations")?;
+    file_assoc.set_value(".htm", &PROG_ID_HTML)?;
+    file_assoc.set_value(".html", &PROG_ID_HTML)?;
 
+    write_prog_id(&hkcu, PROG_ID, APP_NAME, &command, &icon, true)?;
+    let html_display = format!("{APP_NAME} HTML Document");
+    write_prog_id(&hkcu, PROG_ID_HTML, &html_display, &command, &icon, false)?;
+
+    Ok(())
+}
+
+fn write_prog_id(
+    hkcu: &RegKey,
+    prog_id: &str,
+    display_name: &str,
+    command: &String,
+    icon: &String,
+    url_protocol: bool,
+) -> Result<()> {
+    let (classes, _) = hkcu.create_subkey(format!("Software\\Classes\\{prog_id}"))?;
+    classes.set_value("", &display_name.to_string())?;
+    if url_protocol {
+        classes.set_value("URL Protocol", &"")?;
+        classes.set_value("EditFlags", &0x00000002u32)?;
+    }
+    classes.set_value("FriendlyTypeName", &display_name.to_string())?;
     classes
         .create_subkey("DefaultIcon")?
         .0
-        .set_value("", &icon)?;
+        .set_value("", icon)?;
     classes
         .create_subkey("shell\\open\\command")?
         .0
-        .set_value("", &command)?;
-
+        .set_value("", command)?;
     Ok(())
 }

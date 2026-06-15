@@ -1,5 +1,6 @@
 [tools]
 rust = { version = "1.95.0", components = "rustfmt,clippy" }
+zig = "0.14.1"
 
 [env]
 _.path = ["./target/debug", "./target/release"]
@@ -37,5 +38,5 @@ description = "Register SuperSurfer.app as default browser (macOS)"
 run = "/Applications/SuperSurfer.app/Contents/MacOS/SuperSurfer register"
 
 [tasks.package-windows]
-description = "Build supersurfer.exe into dist/"
-run = "pwsh -ExecutionPolicy Bypass -File packaging/windows/build.ps1"
+description = "Build supersurfer.exe into dist/ (native on Windows, cross-compile elsewhere)"
+run = "bash packaging/windows/build.sh"

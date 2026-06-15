@@ -43,7 +43,8 @@ impl Router {
     }
 
     pub fn decide(&self, raw_url: &str, context: &Context) -> Result<RouteDecision> {
-        let mut url = Url::parse(raw_url).with_context(|| format!("invalid URL: {raw_url}"))?;
+        let raw_url = crate::input_url::normalize_input_url(raw_url)?;
+        let mut url = Url::parse(&raw_url).with_context(|| format!("invalid URL: {raw_url}"))?;
         let input_url = url.to_string();
 
         let cleaning_mode = self.config.runtime.url_cleaning_mode()?;
@@ -153,9 +154,26 @@ impl Router {
         let resolved = match self.registry.resolve(&browser_id, profile.as_deref()) {
             Ok(resolved) => resolved,
             Err(err) => {
-                eprintln!("browser resolution failed: {err}. Falling back to defaultBrowser.");
                 let fallback_spec = self.config.runtime.default_browser()?;
                 let (fb_browser, fb_profile) = parse_browser_spec(&fallback_spec);
+                if fb_browser == browser_id {
+                    let installed = self
+                        .registry
+                        .list()
+                        .iter()
+                        .map(|b| b.id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let hint = if installed.is_empty() {
+                        "No browsers detected.".to_string()
+                    } else {
+                        format!("Detected browsers: {installed}")
+                    };
+                    anyhow::bail!(
+                        "{err}. '{browser_id}' is configured as defaultBrowser but is not installed. {hint}"
+                    );
+                }
+                eprintln!("browser resolution failed: {err}. Falling back to defaultBrowser.");
                 let resolved = self.registry.resolve(&fb_browser, fb_profile.as_deref())?;
                 return Ok((
                     resolved.id.clone(),
