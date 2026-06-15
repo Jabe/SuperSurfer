@@ -20,7 +20,7 @@ pub enum ScaffoldSource {
 }
 
 pub fn plan() -> Result<ScaffoldPlan> {
-    let registry = BrowserRegistry::discover()?;
+    let registry = BrowserRegistry::discover_fresh()?;
     let installed: HashSet<String> = registry.list().into_iter().map(|b| b.id.clone()).collect();
 
     let (default_browser, default_source) =

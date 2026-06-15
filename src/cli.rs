@@ -126,7 +126,7 @@ fn cmd_test(url: &str, opener: Option<&str>, open: bool) -> Result<()> {
             bundle_id: None,
             path: None,
         });
-    } else {
+    } else if router.references_opener() {
         context.opener = platform::detect_opener();
     }
 

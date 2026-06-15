@@ -7,6 +7,8 @@ use std::path::Path;
 pub struct LoadedConfig {
     pub runtime: ScriptRuntime,
     pub source_path: std::path::PathBuf,
+    /// True when the config script references ctx.opener / context.opener.
+    pub references_opener: bool,
 }
 
 pub fn load_config(path: &Path) -> Result<LoadedConfig> {
@@ -33,7 +35,12 @@ pub fn load_config(path: &Path) -> Result<LoadedConfig> {
     Ok(LoadedConfig {
         runtime,
         source_path: path.to_path_buf(),
+        references_opener: references_opener_context(&js),
     })
+}
+
+fn references_opener_context(js: &str) -> bool {
+    js.contains("ctx.opener") || js.contains("context.opener")
 }
 
 pub fn load_default_config() -> Result<LoadedConfig> {
@@ -53,4 +60,19 @@ fn wrap_config_script(user_js: &str) -> String {
         ScriptRuntime::helpers_prelude(),
         user_js
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_opener_context_references() {
+        assert!(references_opener_context(
+            "match: (url, ctx) => ctx.opener?.name === 'Slack'"
+        ));
+        assert!(!references_opener_context(
+            "match: (url) => url.hostname === 'github.com'"
+        ));
+    }
 }

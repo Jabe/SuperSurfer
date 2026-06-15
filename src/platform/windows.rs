@@ -5,46 +5,88 @@ use std::path::PathBuf;
 use std::process::Command;
 use winreg::enums::*;
 use winreg::RegKey;
+use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+    TH32CS_SNAPPROCESS,
+};
+use windows_sys::Win32::System::Threading::GetCurrentProcessId;
 
 pub const APP_NAME: &str = "SuperSurfer";
 pub const PROG_ID: &str = "SuperSurferURL";
 pub const PROG_ID_HTML: &str = "SuperSurferHTML";
 
 pub fn detect_opener() -> Option<Opener> {
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "(Get-CimInstance Win32_Process -Filter \"ProcessId=$PID\").ParentProcessId",
-        ])
-        .output()
-        .ok()?;
-    let ppid = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if ppid.is_empty() {
-        return None;
-    }
-    let name_out = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            &format!(
-                "(Get-CimInstance Win32_Process -Filter \"ProcessId={ppid}\").Name"
-            ),
-        ])
-        .output()
-        .ok()?;
-    let name = String::from_utf8_lossy(&name_out.stdout)
-        .trim()
-        .trim_end_matches(".exe")
-        .to_string();
-    if name.is_empty() {
-        return None;
-    }
+    // Hot path: native APIs only — never spawn PowerShell or other shells.
+    let name = parent_process_name()?;
     Some(Opener {
         name,
         bundle_id: None,
         path: None,
     })
+}
+
+fn parent_process_name() -> Option<String> {
+    let pid = unsafe { GetCurrentProcessId() };
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return None;
+    }
+
+    let result = (|| {
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..unsafe { std::mem::zeroed() }
+        };
+
+        if unsafe { Process32FirstW(snapshot, &mut entry) } == 0 {
+            return None;
+        }
+
+        let mut parent_pid = None;
+        loop {
+            if entry.th32ProcessID == pid {
+                parent_pid = Some(entry.th32ParentProcessID);
+                break;
+            }
+            if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
+                break;
+            }
+        }
+
+        let parent_pid = parent_pid?;
+        if parent_pid == 0 {
+            return None;
+        }
+
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..unsafe { std::mem::zeroed() }
+        };
+        if unsafe { Process32FirstW(snapshot, &mut entry) } == 0 {
+            return None;
+        }
+
+        loop {
+            if entry.th32ProcessID == parent_pid {
+                let end = entry
+                    .szExeFile
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(entry.szExeFile.len());
+                let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
+                let name = name.trim_end_matches(".exe").to_ascii_lowercase();
+                return if name.is_empty() { None } else { Some(name) };
+            }
+            if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
+                break;
+            }
+        }
+        None
+    })();
+
+    unsafe { CloseHandle(snapshot) };
+    result
 }
 
 pub fn exe_path() -> Result<PathBuf> {
@@ -156,4 +198,14 @@ fn write_prog_id(
         .0
         .set_value("", command)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parent_process_name_does_not_panic() {
+        let _ = parent_process_name();
+    }
 }

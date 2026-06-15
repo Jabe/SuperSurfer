@@ -15,36 +15,54 @@ struct WindowsHints {
     path_excludes: &'static [&'static str],
 }
 
-pub(super) fn discover(spec: &KnownBrowser) -> Result<Option<BrowserInstall>> {
+pub(super) fn discover_one(
+    spec: &KnownBrowser,
+    start_menu: &[(String, String, String)],
+    load_profiles: bool,
+) -> Result<Option<BrowserInstall>> {
     let hints = windows_hints(spec.id);
-    if let Some((exe_path, display_name)) = find_in_start_menu_internet(spec, hints)? {
-        return Ok(Some(build_install(spec, exe_path, display_name)?));
+    if let Some((exe_path, display_name)) = find_in_start_menu_internet(spec, hints, start_menu)? {
+        return Ok(Some(build_install(spec, exe_path, display_name, load_profiles)?));
     }
     if let Some(exe_path) = find_on_disk(hints) {
-        return Ok(Some(build_install(spec, exe_path, None)?));
+        return Ok(Some(build_install(spec, exe_path, None, load_profiles)?));
     }
     Ok(None)
 }
 
-fn build_install(spec: &KnownBrowser, exe_path: String, display_name: Option<String>) -> Result<BrowserInstall> {
+pub(super) fn discover_profiles_for(spec: &KnownBrowser) -> Result<Vec<BrowserProfile>> {
+    discover_profiles(spec)
+}
+
+fn build_install(
+    spec: &KnownBrowser,
+    exe_path: String,
+    display_name: Option<String>,
+    load_profiles: bool,
+) -> Result<BrowserInstall> {
     Ok(BrowserInstall {
         id: spec.id.to_string(),
         display_name: display_name.unwrap_or_else(|| spec.display_name.to_string()),
         app_path: Some(exe_path),
         bundle_id: None,
-        profiles: discover_profiles(spec)?,
+        profiles: if load_profiles {
+            discover_profiles(spec)?
+        } else {
+            vec![]
+        },
     })
 }
 
 fn find_in_start_menu_internet(
     spec: &KnownBrowser,
     hints: Option<&WindowsHints>,
+    start_menu: &[(String, String, String)],
 ) -> Result<Option<(String, Option<String>)>> {
-    for (key_name, app_name, command) in enumerate_start_menu_browsers()? {
+    for (key_name, app_name, command) in start_menu {
         if matches_spec(spec, hints, &key_name, &app_name, &command) {
             if let Some(exe) = parse_command_path(&command) {
                 if path_matches_hints(hints, &exe) && Path::new(&exe).exists() {
-                    return Ok(Some((exe, Some(app_name))));
+                    return Ok(Some((exe, Some(app_name.clone()))));
                 }
             }
         }
@@ -79,7 +97,7 @@ fn candidate_paths(hints: &WindowsHints) -> Vec<PathBuf> {
     paths
 }
 
-fn enumerate_start_menu_browsers() -> Result<Vec<(String, String, String)>> {
+pub(super) fn enumerate_start_menu_browsers() -> Result<Vec<(String, String, String)>> {
     let mut found = Vec::new();
     let roots = [
         (HKEY_LOCAL_MACHINE, "SOFTWARE\\Clients\\StartMenuInternet"),

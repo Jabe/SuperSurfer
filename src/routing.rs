@@ -38,7 +38,7 @@ impl Router {
     pub fn with_config_path(path: PathBuf) -> Result<Self> {
         Ok(Self {
             config: crate::config::loader::load_config(&path)?,
-            registry: BrowserRegistry::discover()?,
+            registry: BrowserRegistry::discover_fresh()?,
         })
     }
 
@@ -103,6 +103,10 @@ impl Router {
 
     pub fn config_path(&self) -> &PathBuf {
         &self.config.source_path
+    }
+
+    pub fn references_opener(&self) -> bool {
+        self.config.references_opener
     }
 
     fn resolve_target(

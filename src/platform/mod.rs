@@ -75,7 +75,9 @@ pub fn registration_status() -> String {
 pub fn handle_url_arg(url: &str) -> anyhow::Result<()> {
     let router = Router::new()?;
     let mut context = crate::context::Context::default();
-    context.opener = detect_opener();
+    if router.references_opener() {
+        context.opener = detect_opener();
+    }
     let decision = router.route_and_launch(url, &context, false)?;
     eprintln!(
         "routed {} -> {} via {}",

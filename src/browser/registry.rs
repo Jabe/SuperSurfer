@@ -52,13 +52,12 @@ pub struct BrowserRegistry {
 
 impl BrowserRegistry {
     pub fn discover() -> Result<Self> {
-        let mut browsers = HashMap::new();
-        for spec in known_browsers() {
-            if let Some(install) = discover_browser(&spec)? {
-                browsers.insert(spec.id.to_string(), install);
-            }
-        }
-        Ok(Self { browsers })
+        discover_inner(false)
+    }
+
+    /// Full discovery with profiles; bypasses the on-disk cache.
+    pub fn discover_fresh() -> Result<Self> {
+        discover_inner(true)
     }
 
     pub fn list(&self) -> Vec<&BrowserInstall> {
@@ -90,9 +89,25 @@ impl BrowserRegistry {
             .get(id)
             .with_context(|| format!("unknown browser '{id}'"))?;
 
+        let profiles = if profile.is_some() && install.profiles.is_empty() {
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(spec) = known_browsers().into_iter().find(|s| s.id == id) {
+                    discover_windows::discover_profiles_for(&spec)?
+                } else {
+                    install.profiles.clone()
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                install.profiles.clone()
+            }
+        } else {
+            install.profiles.clone()
+        };
+
         let profile_match = profile.and_then(|wanted| {
-            install
-                .profiles
+            profiles
                 .iter()
                 .find(|p| p.name.eq_ignore_ascii_case(wanted))
         });
@@ -496,20 +511,54 @@ fn browser(
     }
 }
 
-fn discover_browser(spec: &KnownBrowser) -> Result<Option<BrowserInstall>> {
-    #[cfg(target_os = "macos")]
-    {
-        return discover_browser_macos(spec);
+#[cfg(target_os = "macos")]
+fn discover_inner(fresh: bool) -> Result<BrowserRegistry> {
+    let _ = fresh;
+    let mut browsers = HashMap::new();
+    for spec in known_browsers() {
+        if let Some(install) = discover_browser_macos(&spec)? {
+            browsers.insert(spec.id.to_string(), install);
+        }
     }
-    #[cfg(target_os = "windows")]
-    {
-        return discover_browser_windows(spec);
+    Ok(BrowserRegistry { browsers })
+}
+
+#[cfg(target_os = "windows")]
+fn discover_inner(fresh: bool) -> Result<BrowserRegistry> {
+    discover_windows_cached(fresh)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn discover_inner(_fresh: bool) -> Result<BrowserRegistry> {
+    Ok(BrowserRegistry {
+        browsers: HashMap::new(),
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn discover_windows_cached(fresh: bool) -> Result<BrowserRegistry> {
+    use crate::browser::cache;
+
+    if !fresh {
+        if let Some(browsers) = cache::load()? {
+            return Ok(BrowserRegistry { browsers });
+        }
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let _ = spec;
-        Ok(None)
+
+    let start_menu = discover_windows::enumerate_start_menu_browsers()?;
+    let fingerprint = cache::registry_fingerprint(&start_menu);
+
+    let load_profiles = fresh;
+    let mut browsers = HashMap::new();
+    for spec in known_browsers() {
+        if let Some(install) = discover_windows::discover_one(&spec, &start_menu, load_profiles)? {
+            browsers.insert(spec.id.to_string(), install);
+        }
     }
+
+    cache::save(&fingerprint, &browsers)?;
+
+    Ok(BrowserRegistry { browsers })
 }
 
 #[cfg(target_os = "macos")]
@@ -542,11 +591,6 @@ fn discover_browser_macos(spec: &KnownBrowser) -> Result<Option<BrowserInstall>>
         bundle_id,
         profiles,
     }))
-}
-
-#[cfg(target_os = "windows")]
-fn discover_browser_windows(spec: &KnownBrowser) -> Result<Option<BrowserInstall>> {
-    discover_windows::discover(spec)
 }
 
 #[cfg(target_os = "macos")]

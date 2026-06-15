@@ -120,6 +120,7 @@ fn chromium_profile_arg(browser_id: &str, profile: Option<&str>) -> Option<Strin
     profile.map(|dir| format!("--profile-directory={dir}"))
 }
 
+#[cfg(target_os = "windows")]
 fn browser_launch_arg(url: &str) -> String {
     if !url.starts_with("file://") {
         return url.to_string();
