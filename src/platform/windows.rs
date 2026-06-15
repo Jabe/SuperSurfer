@@ -6,6 +6,7 @@ use std::process::Command;
 use winreg::enums::*;
 use winreg::RegKey;
 use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
     TH32CS_SNAPPROCESS,
@@ -15,6 +16,13 @@ use windows_sys::Win32::System::Threading::GetCurrentProcessId;
 pub const APP_NAME: &str = "SuperSurfer";
 pub const PROG_ID: &str = "SuperSurferURL";
 pub const PROG_ID_HTML: &str = "SuperSurferHTML";
+
+/// Reconnect stdout/stderr to the launching terminal for CLI subcommands.
+pub fn attach_parent_console() {
+    unsafe {
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
 
 pub fn detect_opener() -> Option<Opener> {
     // Hot path: native APIs only — never spawn PowerShell or other shells.

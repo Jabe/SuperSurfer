@@ -46,7 +46,13 @@ pub enum Commands {
 
 pub fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.len() == 1 && crate::input_url::is_routable_input(&args[0]) {
+    let hot_path = args.len() == 1 && crate::input_url::is_routable_input(&args[0]);
+    #[cfg(target_os = "windows")]
+    if !hot_path {
+        platform::attach_parent_console();
+    }
+
+    if hot_path {
         return platform::handle_url_arg(&args[0]);
     }
 

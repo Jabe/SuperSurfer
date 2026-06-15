@@ -9,7 +9,7 @@ mod windows;
 #[cfg(target_os = "macos")]
 pub use macos::app_bundle_path;
 #[cfg(target_os = "windows")]
-pub use windows::exe_path;
+pub use windows::{attach_parent_console, exe_path};
 
 pub fn system_default_browser_id(registry: &crate::browser::registry::BrowserRegistry) -> Option<String> {
     #[cfg(target_os = "macos")]
