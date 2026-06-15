@@ -3,29 +3,33 @@ use crate::browser::registry::is_gecko_browser;
 use crate::browser::registry::{is_chromium_browser, BrowserRegistry};
 use crate::routing::RouteDecision;
 use anyhow::{Context as _, Result};
-use std::process::Command;
-
 #[cfg(target_os = "macos")]
 use std::fs;
 #[cfg(target_os = "macos")]
 use std::path::{Path, PathBuf};
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::process::Command;
 
 pub fn launch_browser(_registry: &BrowserRegistry, decision: &RouteDecision) -> Result<()> {
-    let app_path = decision
-        .app_path
-        .as_ref()
-        .context("no application path resolved for browser launch")?;
-
     #[cfg(target_os = "macos")]
     {
+        let app_path = decision
+            .app_path
+            .as_ref()
+            .context("no application path resolved for browser launch")?;
         launch_macos(app_path, decision)
     }
     #[cfg(target_os = "windows")]
     {
+        let app_path = decision
+            .app_path
+            .as_ref()
+            .context("no application path resolved for browser launch")?;
         launch_windows(app_path, decision)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
+        let _ = decision;
         anyhow::bail!("browser launch is not supported on this platform yet")
     }
 }

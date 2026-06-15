@@ -631,6 +631,7 @@ fn discover_profiles(spec: &KnownBrowser, _app_path: &Path) -> Result<Vec<Browse
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn discover_gecko_profiles(ini_path: &Path) -> Result<Vec<BrowserProfile>> {
     if !ini_path.exists() {
         return Ok(vec![]);
@@ -664,6 +665,7 @@ fn discover_gecko_profiles(ini_path: &Path) -> Result<Vec<BrowserProfile>> {
     Ok(profiles)
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn discover_chromium_profiles(support_dir: &Path) -> Result<Vec<BrowserProfile>> {
     let state_path = support_dir.join("Local State");
     if !state_path.exists() {
