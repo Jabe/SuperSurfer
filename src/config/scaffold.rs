@@ -7,9 +7,6 @@ use std::collections::HashSet;
 pub struct ScaffoldPlan {
     pub default_browser: String,
     pub default_source: ScaffoldSource,
-    pub github_browser: String,
-    pub meeting_browser: String,
-    pub slack_browser: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,26 +19,11 @@ pub enum ScaffoldSource {
 pub fn plan() -> Result<ScaffoldPlan> {
     let registry = BrowserRegistry::discover_fresh()?;
     let installed: HashSet<String> = registry.list().into_iter().map(|b| b.id.clone()).collect();
-
-    let (default_browser, default_source) =
-        choose_default(&registry, &installed);
-
-    let github_browser = pick_installed(&installed, &["chrome", "brave", "edge", "firefox"])
-        .unwrap_or_else(|| default_browser.clone());
-
-    let meeting_browser = meeting_browser_target(&registry, &installed, &github_browser);
-
-    let slack_browser = pick_installed(&installed, &["firefox", "chrome", "brave", "edge"])
-        .filter(|id| id != &default_browser)
-        .or_else(|| pick_installed(&installed, &["firefox", "chrome", "brave", "edge"]))
-        .unwrap_or_else(|| default_browser.clone());
+    let (default_browser, default_source) = choose_default(&registry, &installed);
 
     Ok(ScaffoldPlan {
         default_browser,
         default_source,
-        github_browser,
-        meeting_browser,
-        slack_browser,
     })
 }
 
@@ -52,23 +34,10 @@ pub fn render(plan: &ScaffoldPlan) -> String {
 export default {{
   defaultBrowser: "{default}",
   urlCleaning: "default",
-  handlers: [
-    {{ match: domain("github.com"), browser: "{github}" }},
-    {{
-      match: [host("meet.google.com"), suffix(".zoom.us")],
-      browser: "{meeting}",
-    }},
-    {{
-      match: (url, ctx) => ctx.opener?.name === "Slack",
-      browser: "{slack}",
-    }},
-  ],
+  handlers: [],
 }} satisfies RouterConfig;
 "#,
         default = plan.default_browser,
-        github = plan.github_browser,
-        meeting = plan.meeting_browser,
-        slack = plan.slack_browser,
     )
 }
 
@@ -79,8 +48,8 @@ pub fn summary(plan: &ScaffoldPlan) -> String {
         ScaffoldSource::PlatformFallback => "platform fallback",
     };
     format!(
-        "defaultBrowser: {} ({source}); github -> {}; meetings -> {}; Slack opener -> {}",
-        plan.default_browser, plan.github_browser, plan.meeting_browser, plan.slack_browser
+        "defaultBrowser: {} ({source})",
+        plan.default_browser,
     )
 }
 
@@ -102,33 +71,6 @@ fn choose_default(
         platform_fallback_browser().to_string(),
         ScaffoldSource::PlatformFallback,
     )
-}
-
-fn meeting_browser_target(
-    registry: &BrowserRegistry,
-    installed: &HashSet<String>,
-    github_browser: &str,
-) -> String {
-    if !installed.contains("chrome") {
-        return github_browser.to_string();
-    }
-
-    let has_work = registry
-        .list()
-        .iter()
-        .find(|b| b.id == "chrome")
-        .is_some_and(|chrome| {
-            chrome
-                .profiles
-                .iter()
-                .any(|profile| profile.name.eq_ignore_ascii_case("work"))
-        });
-
-    if has_work {
-        "chrome:work".to_string()
-    } else {
-        "chrome".to_string()
-    }
 }
 
 fn pick_installed(installed: &HashSet<String>, candidates: &[&str]) -> Option<String> {
@@ -169,17 +111,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn render_includes_planned_browser_ids() {
+    fn render_includes_default_browser_only() {
         let plan = ScaffoldPlan {
             default_browser: "brave".to_string(),
             default_source: ScaffoldSource::SystemDefault,
-            github_browser: "chrome".to_string(),
-            meeting_browser: "chrome:work".to_string(),
-            slack_browser: "firefox".to_string(),
         };
         let config = render(&plan);
         assert!(config.contains(r#"defaultBrowser: "brave""#));
-        assert!(config.contains(r#"browser: "chrome:work""#));
-        assert!(config.contains(r#"browser: "firefox""#));
+        assert!(config.contains("handlers: []"));
+        assert!(!config.contains("github.com"));
+        assert!(!config.contains("zoom.us"));
+        assert!(!config.contains("Slack"));
     }
 }
