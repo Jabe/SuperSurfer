@@ -1,0 +1,28 @@
+[package]
+name = "supersurfer"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-platform default browser router with TypeScript config"
+license = "MIT"
+repository = "https://github.com/supersurfer/supersurfer"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+directories = "5"
+globset = "0.4"
+regex = "1"
+rquickjs = { version = "0.8", features = ["macro"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "1"
+url = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+plist = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

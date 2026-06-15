@@ -1,0 +1,29 @@
+[tools]
+rust = { version = "1.95.0", components = "rustfmt,clippy" }
+
+[env]
+_.path = ["./target/debug", "./target/release"]
+
+[tasks.build]
+description = "Build release binary"
+run = "cargo build --release"
+
+[tasks.test]
+description = "Run unit tests"
+run = "cargo test"
+
+[tasks.check]
+description = "Format, lint, and test"
+run = [
+  "cargo fmt --all -- --check",
+  "cargo clippy --all-targets -- -D warnings",
+  "cargo test",
+]
+
+[tasks.dev]
+description = "Run supersurfer CLI (pass args after --)"
+run = "cargo run --"
+
+[tasks.doctor]
+description = "Show detected browsers and config status"
+run = "cargo run -- doctor"
