@@ -42,20 +42,16 @@ pub fn app_bundle_path() -> Option<PathBuf> {
         }
     }
 
-    for candidate in candidate_app_paths() {
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
+    candidate_app_paths()
+        .into_iter()
+        .find(|candidate| candidate.exists())
 }
 
 pub fn register_default_browser() -> Result<()> {
     let app = app_bundle_path().with_context(|| {
-        format!(
-            "SuperSurfer.app not found. Build it with `mise run package-macos`, then install to /Applications:\n  \
-             cp -R dist/SuperSurfer.app /Applications/"
-        )
+        "SuperSurfer.app not found. Build it with `mise run package-macos`, then install to /Applications:\n  \
+         cp -R dist/SuperSurfer.app /Applications/"
+            .to_string()
     })?;
 
     register_with_launch_services(&app)?;
@@ -77,14 +73,15 @@ pub fn register_default_browser() -> Result<()> {
 }
 
 pub fn system_default_browser_id(registry: &BrowserRegistry) -> Option<String> {
-    let bundle_id = system_default_bundle_id("https")
-        .or_else(|| system_default_bundle_id("http"))?;
+    let bundle_id =
+        system_default_bundle_id("https").or_else(|| system_default_bundle_id("http"))?;
     registry.id_for_bundle_id(&bundle_id)
 }
 
 fn system_default_bundle_id(scheme: &str) -> Option<String> {
     let home = directories::UserDirs::new()?.home_dir().to_path_buf();
-    let path = home.join("Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist");
+    let path = home
+        .join("Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist");
     let file = fs::File::open(path).ok()?;
     let value: plist::Value = plist::from_reader(file).ok()?;
     let handlers = value.as_dictionary()?.get("LSHandlers")?.as_array()?;
@@ -206,7 +203,10 @@ fn open_default_browser_settings() {
 
 fn default_handler_for(scheme: &str) -> Result<String> {
     let output = Command::new("defaults")
-        .args(["read", "com.apple.LaunchServices/com.apple.launchservices.secure"])
+        .args([
+            "read",
+            "com.apple.LaunchServices/com.apple.launchservices.secure",
+        ])
         .output()?;
     if !output.status.success() {
         anyhow::bail!("defaults read failed");

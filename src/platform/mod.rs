@@ -11,14 +11,16 @@ pub use macos::app_bundle_path;
 #[cfg(target_os = "windows")]
 pub use windows::{attach_parent_console, exe_path};
 
-pub fn system_default_browser_id(registry: &crate::browser::registry::BrowserRegistry) -> Option<String> {
+pub fn system_default_browser_id(
+    registry: &crate::browser::registry::BrowserRegistry,
+) -> Option<String> {
     #[cfg(target_os = "macos")]
     {
-        return macos::system_default_browser_id(registry);
+        macos::system_default_browser_id(registry)
     }
     #[cfg(target_os = "windows")]
     {
-        return windows::system_default_browser_id(registry);
+        windows::system_default_browser_id(registry)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -30,11 +32,11 @@ pub fn system_default_browser_id(registry: &crate::browser::registry::BrowserReg
 pub fn detect_opener() -> Option<Opener> {
     #[cfg(target_os = "macos")]
     {
-        return macos::detect_opener();
+        macos::detect_opener()
     }
     #[cfg(target_os = "windows")]
     {
-        return windows::detect_opener();
+        windows::detect_opener()
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -45,11 +47,11 @@ pub fn detect_opener() -> Option<Opener> {
 pub fn register_default_browser() -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     {
-        return macos::register_default_browser();
+        macos::register_default_browser()
     }
     #[cfg(target_os = "windows")]
     {
-        return windows::register_default_browser();
+        windows::register_default_browser()
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -60,11 +62,11 @@ pub fn register_default_browser() -> anyhow::Result<()> {
 pub fn registration_status() -> String {
     #[cfg(target_os = "macos")]
     {
-        return macos::registration_status();
+        macos::registration_status()
     }
     #[cfg(target_os = "windows")]
     {
-        return windows::registration_status();
+        windows::registration_status()
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {

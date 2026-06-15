@@ -35,7 +35,7 @@ pub fn clean_url(url: &mut Url, mode: &str) -> anyhow::Result<()> {
     }
     match mode {
         "off" => return Ok(()),
-        "default" | _ => {
+        _ => {
             unwrap_redirects(url)?;
             strip_tracking_params(url);
         }
@@ -89,8 +89,8 @@ fn unwrap_once(url: &mut Url) -> bool {
 fn is_teams_safelinks(url: &Url) -> bool {
     let host = url.host_str().unwrap_or_default().to_lowercase();
     let path = url.path().to_lowercase();
-    let teams_host = host.ends_with(".teams.cdn.office.net")
-        || host == "teams.public.onecdn.static.microsoft";
+    let teams_host =
+        host.ends_with(".teams.cdn.office.net") || host == "teams.public.onecdn.static.microsoft";
     let safelink_path = path.contains("/safelinks/") || path.contains("atp-safelinks");
     teams_host && safelink_path
 }
@@ -100,7 +100,11 @@ fn is_facebook_linkshim(url: &Url) -> bool {
     let path = url.path();
     matches!(
         host.as_str(),
-        "l.facebook.com" | "lm.facebook.com" | "m.facebook.com" | "www.facebook.com" | "facebook.com"
+        "l.facebook.com"
+            | "lm.facebook.com"
+            | "m.facebook.com"
+            | "www.facebook.com"
+            | "facebook.com"
     ) && path.starts_with("/l.php")
 }
 
@@ -119,7 +123,11 @@ fn unwrap_sophos(url: &mut Url) -> bool {
     let Some(dest) = query_param_value(url, "d") else {
         return false;
     };
-    for candidate in [dest.clone(), format!("https://{dest}"), format!("http://{dest}")] {
+    for candidate in [
+        dest.clone(),
+        format!("https://{dest}"),
+        format!("http://{dest}"),
+    ] {
         if let Ok(parsed) = Url::parse(&candidate) {
             *url = parsed;
             return true;
@@ -159,9 +167,7 @@ fn strip_tracking_params(url: &mut Url) {
     let utm = UTM_RE.get_or_init(|| Regex::new(r"^utm_").unwrap());
     let pairs: Vec<(String, String)> = url
         .query_pairs()
-        .filter(|(k, _)| {
-            !TRACKING_PARAMS.contains(&k.as_ref()) && !utm.is_match(k.as_ref())
-        })
+        .filter(|(k, _)| !TRACKING_PARAMS.contains(&k.as_ref()) && !utm.is_match(k.as_ref()))
         .map(|(k, v)| (k.into_owned(), v.into_owned()))
         .collect();
 

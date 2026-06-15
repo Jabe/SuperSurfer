@@ -12,7 +12,8 @@ pub fn transpile(source: &str, _path: &Path) -> Result<String> {
     let import_type = IMPORT_TYPE.get_or_init(|| Regex::new(r"(?m)^import\s+type\s+.+$").unwrap());
     out = import_type.replace_all(&out, "").to_string();
 
-    let satisfies = SATISFIES.get_or_init(|| Regex::new(r"\s+satisfies\s+[\w.<>,\s\[\]|]+").unwrap());
+    let satisfies =
+        SATISFIES.get_or_init(|| Regex::new(r"\s+satisfies\s+[\w.<>,\s\[\]|]+").unwrap());
     out = satisfies.replace_all(&out, "").to_string();
 
     out = out.replace("export default", "globalThis.__SUPERSURFER_CONFIG__ =");

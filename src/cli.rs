@@ -7,7 +7,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "supersurfer", about = "Cross-platform browser router with TypeScript config")]
+#[command(
+    name = "supersurfer",
+    about = "Cross-platform browser router with TypeScript config"
+)]
 pub struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -75,7 +78,10 @@ fn cmd_init(register: bool, force: bool) -> Result<()> {
         let path = config::write_scaffold(force)?;
         println!("Created config at {}", path.0.display());
         println!("Created types at {}", config::types_path()?.display());
-        println!("Scaffolded from this machine: {}", config::scaffold::summary(&path.1));
+        println!(
+            "Scaffolded from this machine: {}",
+            config::scaffold::summary(&path.1)
+        );
     }
 
     if register {
@@ -111,7 +117,10 @@ fn cmd_doctor() -> Result<()> {
         }
     }
     println!();
-    println!("Default browser registration: {}", platform::registration_status());
+    println!(
+        "Default browser registration: {}",
+        platform::registration_status()
+    );
     #[cfg(target_os = "macos")]
     if let Some(app) = platform::app_bundle_path() {
         println!("App bundle: {}", app.display());

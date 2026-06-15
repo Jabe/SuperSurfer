@@ -21,11 +21,11 @@ impl Platform {
     pub fn current() -> Self {
         #[cfg(target_os = "macos")]
         {
-            return Platform::Macos;
+            Platform::Macos
         }
         #[cfg(target_os = "windows")]
         {
-            return Platform::Windows;
+            Platform::Windows
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {

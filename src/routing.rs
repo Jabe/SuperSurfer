@@ -8,6 +8,17 @@ use anyhow::{Context as _, Result};
 use std::path::PathBuf;
 use url::Url;
 
+type ResolvedTarget = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    bool,
+    Option<String>,
+    bool,
+    bool,
+);
+
 #[derive(Debug, Clone)]
 pub struct RouteDecision {
     pub input_url: String,
@@ -63,8 +74,16 @@ impl Router {
             ),
         };
 
-        let (browser_id, browser, profile, profile_directory, private, app_path, matched_handler, fallback) =
-            self.resolve_target(target)?;
+        let (
+            browser_id,
+            browser,
+            profile,
+            profile_directory,
+            private,
+            app_path,
+            matched_handler,
+            fallback,
+        ) = self.resolve_target(target)?;
 
         let decision = RouteDecision {
             input_url,
@@ -81,15 +100,18 @@ impl Router {
 
         logging::append_decision(&format!(
             "{} -> {} ({})",
-            decision.input_url,
-            decision.cleaned_url,
-            decision.browser
+            decision.input_url, decision.cleaned_url, decision.browser
         ))?;
 
         Ok(decision)
     }
 
-    pub fn route_and_launch(&self, raw_url: &str, context: &Context, dry_run: bool) -> Result<RouteDecision> {
+    pub fn route_and_launch(
+        &self,
+        raw_url: &str,
+        context: &Context,
+        dry_run: bool,
+    ) -> Result<RouteDecision> {
         let decision = self.decide(raw_url, context)?;
         if !dry_run {
             launch_browser(&self.registry, &decision)?;
@@ -109,19 +131,7 @@ impl Router {
         self.config.references_opener
     }
 
-    fn resolve_target(
-        &self,
-        target: BrowserTarget,
-    ) -> Result<(
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        bool,
-        Option<String>,
-        bool,
-        bool,
-    )> {
+    fn resolve_target(&self, target: BrowserTarget) -> Result<ResolvedTarget> {
         if let Some(app) = target.app {
             let name = target.name.unwrap_or_else(|| "custom-app".to_string());
             return Ok((

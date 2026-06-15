@@ -3,15 +3,14 @@ use crate::context::Opener;
 use anyhow::{Context as _, Result};
 use std::path::PathBuf;
 use std::process::Command;
-use winreg::enums::*;
-use winreg::RegKey;
 use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-    TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+use winreg::enums::*;
+use winreg::RegKey;
 
 pub const APP_NAME: &str = "SuperSurfer";
 pub const PROG_ID: &str = "SuperSurferURL";
@@ -127,7 +126,9 @@ pub fn system_default_browser_id(registry: &BrowserRegistry) -> Option<String> {
 
 fn system_default_prog_id(scheme: &str) -> Option<String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let path = format!(r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\{scheme}\UserChoice");
+    let path = format!(
+        r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\{scheme}\UserChoice"
+    );
     hkcu.open_subkey(path).ok()?.get_value("ProgId").ok()
 }
 
@@ -152,9 +153,13 @@ fn write_registry(exe: &PathBuf) -> Result<()> {
 
     hkcu.create_subkey("Software\\RegisteredApplications")?
         .0
-        .set_value(APP_NAME, &format!("Software\\Clients\\StartMenuInternet\\{APP_NAME}\\Capabilities"))?;
+        .set_value(
+            APP_NAME,
+            &format!("Software\\Clients\\StartMenuInternet\\{APP_NAME}\\Capabilities"),
+        )?;
 
-    let (clients, _) = hkcu.create_subkey(format!("Software\\Clients\\StartMenuInternet\\{APP_NAME}"))?;
+    let (clients, _) =
+        hkcu.create_subkey(format!("Software\\Clients\\StartMenuInternet\\{APP_NAME}"))?;
     clients.set_value("", &APP_NAME)?;
     clients
         .create_subkey("shell\\open\\command")?

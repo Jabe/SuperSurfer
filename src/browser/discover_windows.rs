@@ -1,4 +1,7 @@
-use super::{discover_chromium_profiles, discover_gecko_profiles, BrowserInstall, BrowserProfile, KnownBrowser, ProfileKind};
+use super::{
+    discover_chromium_profiles, discover_gecko_profiles, BrowserInstall, BrowserProfile,
+    KnownBrowser, ProfileKind,
+};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use winreg::enums::*;
@@ -22,7 +25,12 @@ pub(super) fn discover_one(
 ) -> Result<Option<BrowserInstall>> {
     let hints = windows_hints(spec.id);
     if let Some((exe_path, display_name)) = find_in_start_menu_internet(spec, hints, start_menu)? {
-        return Ok(Some(build_install(spec, exe_path, display_name, load_profiles)?));
+        return Ok(Some(build_install(
+            spec,
+            exe_path,
+            display_name,
+            load_profiles,
+        )?));
     }
     if let Some(exe_path) = find_on_disk(hints) {
         return Ok(Some(build_install(spec, exe_path, None, load_profiles)?));
@@ -101,7 +109,10 @@ pub(super) fn enumerate_start_menu_browsers() -> Result<Vec<(String, String, Str
     let mut found = Vec::new();
     let roots = [
         (HKEY_LOCAL_MACHINE, "SOFTWARE\\Clients\\StartMenuInternet"),
-        (HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Clients\\StartMenuInternet"),
+        (
+            HKEY_LOCAL_MACHINE,
+            "SOFTWARE\\WOW6432Node\\Clients\\StartMenuInternet",
+        ),
         (HKEY_CURRENT_USER, "SOFTWARE\\Clients\\StartMenuInternet"),
     ];
 
@@ -142,7 +153,13 @@ fn matches_spec(
     for name in [spec.display_name]
         .into_iter()
         .chain(spec.aliases.iter().copied())
-        .chain(hints.map(|h| h.start_menu_names).unwrap_or(&[]).iter().copied())
+        .chain(
+            hints
+                .map(|h| h.start_menu_names)
+                .unwrap_or(&[])
+                .iter()
+                .copied(),
+        )
     {
         if key_name.eq_ignore_ascii_case(name) || app_name.eq_ignore_ascii_case(name) {
             return true;
@@ -231,9 +248,9 @@ fn gecko_profiles_ini(spec: &KnownBrowser) -> Option<PathBuf> {
         }
         "waterfox" => PathBuf::from(&appdata).join("Waterfox/profiles.ini"),
         "zen" => PathBuf::from(&appdata).join("zen/profiles.ini"),
-        "tor" => PathBuf::from(&appdata).join(
-            "Tor Browser/Browser/TorBrowser/Data/Browser/profiles.ini",
-        ),
+        "tor" => {
+            PathBuf::from(&appdata).join("Tor Browser/Browser/TorBrowser/Data/Browser/profiles.ini")
+        }
         _ => {
             let relative = spec.gecko_profiles_ini?;
             PathBuf::from(&appdata).join(relative)

@@ -47,10 +47,7 @@ pub fn summary(plan: &ScaffoldPlan) -> String {
         ScaffoldSource::InstalledFallback => "first installed browser",
         ScaffoldSource::PlatformFallback => "platform fallback",
     };
-    format!(
-        "defaultBrowser: {} ({source})",
-        plan.default_browser,
-    )
+    format!("defaultBrowser: {} ({source})", plan.default_browser,)
 }
 
 fn choose_default(

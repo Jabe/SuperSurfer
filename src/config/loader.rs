@@ -22,8 +22,7 @@ pub fn load_config(path: &Path) -> Result<LoadedConfig> {
             let transpiled = if path.extension().and_then(|e| e.to_str()) == Some("ts") {
                 transpile::transpile(&source, path)?
             } else {
-                source
-                    .replace("export default", "globalThis.__SUPERSURFER_CONFIG__ =")
+                source.replace("export default", "globalThis.__SUPERSURFER_CONFIG__ =")
             };
             let wrapped = wrap_config_script(&transpiled);
             cache::write_cached(&cache_dir, &key, &wrapped)?;
@@ -55,11 +54,7 @@ pub fn load_default_config() -> Result<LoadedConfig> {
 }
 
 fn wrap_config_script(user_js: &str) -> String {
-    format!(
-        "{}{}",
-        ScriptRuntime::helpers_prelude(),
-        user_js
-    )
+    format!("{}{}", ScriptRuntime::helpers_prelude(), user_js)
 }
 
 #[cfg(test)]

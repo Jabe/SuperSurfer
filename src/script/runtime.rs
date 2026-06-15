@@ -2,9 +2,9 @@ use crate::context::Context as RouteContext;
 use anyhow::{anyhow, Context as _, Result};
 use globset::{Glob, GlobMatcher};
 use rquickjs::{Array, CatchResultExt, Context, Function, Object, Runtime, Value};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
-use std::cell::RefCell;
 use std::time::{Duration, Instant};
 use url::Url;
 
@@ -70,16 +70,15 @@ impl ScriptRuntime {
         })
     }
 
-    pub fn route(
-        &self,
-        url: &Url,
-        context: &RouteContext,
-    ) -> Result<(Option<BrowserTarget>, Url)> {
+    pub fn route(&self, url: &Url, context: &RouteContext) -> Result<(Option<BrowserTarget>, Url)> {
         let started = Instant::now();
         let working = RefCell::new(url.clone());
         let result = self.route_inner(&working, context);
         if started.elapsed() > EVAL_TIMEOUT {
-            anyhow::bail!("routing eval exceeded {} ms budget", EVAL_TIMEOUT.as_millis());
+            anyhow::bail!(
+                "routing eval exceeded {} ms budget",
+                EVAL_TIMEOUT.as_millis()
+            );
         }
         let target = result?;
         Ok((target, working.into_inner()))
@@ -269,9 +268,7 @@ fn make_url_object<'js>(ctx: &rquickjs::Ctx<'js>, url: &Url) -> Result<Object<'j
     obj.set("pathname", url.path())?;
     obj.set(
         "search",
-        url.query()
-            .map(|q| format!("?{q}"))
-            .unwrap_or_default(),
+        url.query().map(|q| format!("?{q}")).unwrap_or_default(),
     )?;
     let search_params = Object::new(ctx.clone())?;
     for (key, value) in url.query_pairs() {

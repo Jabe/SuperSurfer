@@ -20,10 +20,7 @@ pub fn log_file() -> Result<PathBuf> {
 
 pub fn append_decision(line: &str) -> Result<()> {
     let path = log_file()?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
     let timestamp = OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "unknown-time".to_string());

@@ -67,14 +67,16 @@ impl BrowserRegistry {
     }
 
     pub fn id_for_bundle_id(&self, bundle_id: &str) -> Option<String> {
-        self.browsers.values().find_map(|install| {
-            install
-                .bundle_id
-                .as_deref()
-                .filter(|id| id.eq_ignore_ascii_case(bundle_id))
-                .map(|_| install.id.clone())
-        })
-        .or_else(|| browser_id_for_bundle_id(bundle_id).map(str::to_string))
+        self.browsers
+            .values()
+            .find_map(|install| {
+                install
+                    .bundle_id
+                    .as_deref()
+                    .filter(|id| id.eq_ignore_ascii_case(bundle_id))
+                    .map(|_| install.id.clone())
+            })
+            .or_else(|| browser_id_for_bundle_id(bundle_id).map(str::to_string))
     }
 
     pub fn id_for_prog_id(&self, prog_id: &str) -> Option<String> {
@@ -489,6 +491,7 @@ fn known_browsers() -> Vec<KnownBrowser> {
     ]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn browser(
     id: &'static str,
     display_name: &'static str,
@@ -580,8 +583,8 @@ fn discover_browser_macos(spec: &KnownBrowser) -> Result<Option<BrowserInstall>>
         return Ok(None);
     };
 
-    let bundle_id = read_bundle_id(&app_path)
-        .or_else(|| spec.mac_bundle_ids.first().map(|s| s.to_string()));
+    let bundle_id =
+        read_bundle_id(&app_path).or_else(|| spec.mac_bundle_ids.first().map(|s| s.to_string()));
     let profiles = discover_profiles(spec, &app_path)?;
 
     Ok(Some(BrowserInstall {
@@ -697,7 +700,10 @@ mod tests {
     fn normalizes_common_display_names() {
         assert_eq!(normalize_browser_id("Google Chrome"), "chrome");
         assert_eq!(normalize_browser_id("Brave Browser"), "brave");
-        assert_eq!(normalize_browser_id("Firefox Developer Edition"), "firefox-developer-edition");
+        assert_eq!(
+            normalize_browser_id("Firefox Developer Edition"),
+            "firefox-developer-edition"
+        );
         assert_eq!(normalize_browser_id("Opera GX"), "opera-gx");
     }
 

@@ -1,6 +1,6 @@
-use crate::browser::registry::{is_chromium_browser, BrowserRegistry};
 #[cfg(target_os = "macos")]
 use crate::browser::registry::is_gecko_browser;
+use crate::browser::registry::{is_chromium_browser, BrowserRegistry};
 use crate::routing::RouteDecision;
 use anyhow::{Context as _, Result};
 use std::process::Command;
@@ -18,11 +18,11 @@ pub fn launch_browser(_registry: &BrowserRegistry, decision: &RouteDecision) -> 
 
     #[cfg(target_os = "macos")]
     {
-        return launch_macos(app_path, decision);
+        launch_macos(app_path, decision)
     }
     #[cfg(target_os = "windows")]
     {
-        return launch_windows(app_path, decision);
+        launch_windows(app_path, decision)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -33,9 +33,10 @@ pub fn launch_browser(_registry: &BrowserRegistry, decision: &RouteDecision) -> 
 #[cfg(target_os = "macos")]
 fn launch_macos(app_path: &str, decision: &RouteDecision) -> Result<()> {
     let mut browser_args = Vec::new();
-    if let Some(profile_dir) =
-        chromium_profile_arg(decision.browser_id.as_str(), decision.profile_directory.as_deref())
-    {
+    if let Some(profile_dir) = chromium_profile_arg(
+        decision.browser_id.as_str(),
+        decision.profile_directory.as_deref(),
+    ) {
         browser_args.push(profile_dir);
     } else if let Some(profile) = decision.profile.as_deref() {
         if is_gecko_browser(decision.browser_id.as_str()) {
@@ -98,8 +99,10 @@ fn macos_app_executable(app_path: &str) -> Result<PathBuf> {
 #[cfg(target_os = "windows")]
 fn launch_windows(exe_path: &str, decision: &RouteDecision) -> Result<()> {
     let mut cmd = Command::new(exe_path);
-    if let Some(profile_dir) = chromium_profile_arg(decision.browser_id.as_str(), decision.profile_directory.as_deref())
-    {
+    if let Some(profile_dir) = chromium_profile_arg(
+        decision.browser_id.as_str(),
+        decision.profile_directory.as_deref(),
+    ) {
         cmd.arg(profile_dir);
     }
     if decision.private {
