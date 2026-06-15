@@ -27,3 +27,15 @@ run = "cargo run --"
 [tasks.doctor]
 description = "Show detected browsers and config status"
 run = "cargo run -- doctor"
+
+[tasks.package-macos]
+description = "Build SuperSurfer.app bundle"
+run = "bash packaging/macos/build-app.sh"
+
+[tasks.register]
+description = "Register SuperSurfer.app as default browser (macOS)"
+run = "/Applications/SuperSurfer.app/Contents/MacOS/SuperSurfer register"
+
+[tasks.package-windows]
+description = "Build supersurfer.exe into dist/"
+run = "pwsh -ExecutionPolicy Bypass -File packaging/windows/build.ps1"

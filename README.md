@@ -47,17 +47,46 @@ export default {
 } satisfies RouterConfig;
 ```
 
+## Packaging (default browser)
+
+### macOS — `SuperSurfer.app`
+
+```bash
+mise run package-macos
+cp -R dist/SuperSurfer.app /Applications/
+mise run register
+# or: /Applications/SuperSurfer.app/Contents/MacOS/SuperSurfer register
+/Applications/SuperSurfer.app/Contents/MacOS/SuperSurfer test https://github.com/foo
+```
+
+Note: if your shell aliases `open` to `xdg-open`, use the full app path above — not `open -a SuperSurfer`.
+
+The bundle contains a small Cocoa launcher (`SuperSurfer`) that receives `http`/`https` URL events and forwards them to the Rust router (`supersurfer-bin`). On macOS's case-insensitive filesystem these must be distinct names.
+
+### Windows — `supersurfer.exe`
+
+On a Windows machine (or cross-compile with `rustup target add x86_64-pc-windows-msvc`):
+
+```powershell
+mise run package-windows
+.\dist\supersurfer.exe init --register
+.\dist\supersurfer.exe test https://github.com/foo
+```
+
+`init --register` writes the `StartMenuInternet` registry entries so SuperSurfer appears under **Settings → Default apps → Web browser**.
+
 ## CLI
 
 | Command | Purpose |
 |---|---|
 | `supersurfer init` | Scaffold config + types |
+| `supersurfer register` | Register as default browser |
 | `supersurfer doctor` | List browsers, validate config |
 | `supersurfer test <url>` | Dry-run routing decision |
 | `supersurfer logs` | Tail decision log |
 | `supersurfer update-rules` | Fetch signed URL-cleaning rules (planned) |
 
-When registered as the default browser, the OS invokes `supersurfer <url>` directly.
+When registered as the default browser, the OS invokes the packaged app with the URL (macOS: `SuperSurfer.app`; Windows: `supersurfer.exe "%1"`).
 
 ## Architecture
 
@@ -78,10 +107,12 @@ This is an initial implementation of the browser router spec:
 - TypeScript config via lightweight type-stripping + cache
 - Matcher helpers (`host`, `domain`, `suffix`, `glob`, `path`, `regex`, `all`, `not`)
 - Built-in URL cleaning (Outlook safelinks, Google redirects, UTM stripping)
+- macOS `SuperSurfer.app` bundle + Launch Services / duti registration
+- Windows `supersurfer.exe` + registry browser registration
 - macOS browser discovery + launch
 - CLI: `init`, `doctor`, `test`, `logs`
 
-**Not yet implemented:** default-browser auto-registration app bundle, Windows browser discovery, signed rules updates, Finicky migration.
+**Not yet implemented:** Windows browser discovery, signed/notarized distribution, signed rules updates.
 
 ## License
 

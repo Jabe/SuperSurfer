@@ -10,11 +10,7 @@ use clap::{Parser, Subcommand};
 #[command(name = "supersurfer", about = "Cross-platform browser router with TypeScript config")]
 pub struct Cli {
     #[command(subcommand)]
-    command: Option<Commands>,
-
-    /// URL passed when invoked as the default browser handler
-    #[arg(value_name = "URL")]
-    url: Option<String>,
+    command: Commands,
 }
 
 #[derive(Subcommand)]
@@ -36,6 +32,9 @@ pub enum Commands {
         #[arg(long)]
         open: bool,
     },
+    /// Register SuperSurfer as the default browser (macOS app / Windows exe)
+    #[command(name = "register")]
+    RegisterApp,
     /// Fetch signed default URL-cleaning rules update (not yet implemented)
     UpdateRules,
     /// Tail routing decision log
@@ -46,33 +45,40 @@ pub enum Commands {
 }
 
 pub fn run() -> Result<()> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.len() == 1 && looks_like_url(&args[0]) {
+        return platform::handle_url_arg(&args[0]);
+    }
+
     let cli = Cli::parse();
     match cli.command {
-        Some(Commands::Init { register, force }) => cmd_init(register, force),
-        Some(Commands::Doctor) => cmd_doctor(),
-        Some(Commands::Test { url, opener, open }) => cmd_test(&url, opener.as_deref(), open),
-        Some(Commands::UpdateRules) => cmd_update_rules(),
-        Some(Commands::Logs { lines }) => logging::tail_logs(lines),
-        None => {
-            if let Some(url) = cli.url {
-                platform::handle_url_arg(&url)
-            } else {
-                eprintln!("SuperSurfer — pass a URL or use a subcommand. Try `supersurfer --help`.");
-                Ok(())
-            }
-        }
+        Commands::Init { register, force } => cmd_init(register, force),
+        Commands::Doctor => cmd_doctor(),
+        Commands::RegisterApp => platform::register_default_browser(),
+        Commands::Test { url, opener, open } => cmd_test(&url, opener.as_deref(), open),
+        Commands::UpdateRules => cmd_update_rules(),
+        Commands::Logs { lines } => logging::tail_logs(lines),
     }
 }
 
+fn looks_like_url(arg: &str) -> bool {
+    arg.starts_with("http://") || arg.starts_with("https://")
+}
+
 fn cmd_init(register: bool, force: bool) -> Result<()> {
-    let path = config::write_scaffold(force)?;
-    println!("Created config at {}", path.display());
-    println!("Created types at {}", config::types_path()?.display());
+    let config_path = config::config_path()?;
+    if config_path.exists() && !force {
+        println!("Config already exists at {}", config_path.display());
+    } else {
+        let path = config::write_scaffold(force)?;
+        println!("Created config at {}", path.display());
+        println!("Created types at {}", config::types_path()?.display());
+    }
+
     if register {
         platform::register_default_browser()?;
-        println!("Registered SuperSurfer as default browser.");
     } else {
-        println!("Run `supersurfer init --register` when ready to set as default browser.");
+        println!("Run `supersurfer register` when ready to set as default browser.");
     }
     Ok(())
 }
@@ -103,6 +109,14 @@ fn cmd_doctor() -> Result<()> {
     }
     println!();
     println!("Default browser registration: {}", platform::registration_status());
+    #[cfg(target_os = "macos")]
+    if let Some(app) = platform::app_bundle_path() {
+        println!("App bundle: {}", app.display());
+    }
+    #[cfg(target_os = "windows")]
+    if let Ok(exe) = platform::exe_path() {
+        println!("Executable: {}", exe.display());
+    }
     Ok(())
 }
 

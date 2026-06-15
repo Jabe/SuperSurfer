@@ -6,6 +6,11 @@ mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
+#[cfg(target_os = "macos")]
+pub use macos::app_bundle_path;
+#[cfg(target_os = "windows")]
+pub use windows::exe_path;
+
 pub fn detect_opener() -> Option<Opener> {
     #[cfg(target_os = "macos")]
     {
