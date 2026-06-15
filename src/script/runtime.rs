@@ -184,13 +184,8 @@ fn parse_browser_target(value: Value<'_>) -> Result<BrowserTarget> {
 
     if let Ok(display_name) = obj.get::<_, String>("name") {
         let profile: Option<String> = obj.get("profile").ok();
-        let id = map_browser_name(&display_name)?;
-        let spec = match profile {
-            Some(profile) => format!("{id}:{profile}"),
-            None => id,
-        };
         return Ok(BrowserTarget {
-            name: Some(spec),
+            name: Some(browser_spec_from_parts(&display_name, profile)?),
             private: false,
             app: None,
             exe: None,
@@ -201,12 +196,26 @@ fn parse_browser_target(value: Value<'_>) -> Result<BrowserTarget> {
     let private: bool = obj.get("private").unwrap_or(false);
     let app: Option<String> = obj.get("app").ok();
     let exe: Option<String> = obj.get("exe").ok();
+    let name = browser
+        .map(|browser| {
+            let profile: Option<String> = obj.get("profile").ok();
+            browser_spec_from_parts(&browser, profile)
+        })
+        .transpose()?;
 
     Ok(BrowserTarget {
-        name: browser,
+        name,
         private,
         app,
         exe,
+    })
+}
+
+fn browser_spec_from_parts(browser: &str, profile: Option<String>) -> Result<String> {
+    let id = map_browser_name(browser)?;
+    Ok(match profile {
+        Some(profile) => format!("{id}:{profile}"),
+        None => id,
     })
 }
 

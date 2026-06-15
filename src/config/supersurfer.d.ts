@@ -30,6 +30,7 @@ export type BrowserTarget =
   | string
   | {
       browser: string;
+      profile?: string;
       private?: boolean;
     }
   | {
