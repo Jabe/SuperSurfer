@@ -59,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        if !commands.is_empty {
+        if !commands.isEmpty {
             finished = true
             runSupersurfer(args: commands)
             NSApp.terminate(nil)
