@@ -1,6 +1,7 @@
 use crate::context::Context as RouteContext;
 use anyhow::{anyhow, Context as _, Result};
 use globset::{Glob, GlobMatcher};
+use rquickjs::context::intrinsic;
 use rquickjs::{Array, CatchResultExt, Context, Function, Object, Runtime, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -12,6 +13,26 @@ const EVAL_TIMEOUT: Duration = Duration::from_millis(250);
 
 static GLOB_MATCHERS: LazyLock<Mutex<HashMap<String, GlobMatcher>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn create_sandbox_context(runtime: &Runtime) -> Result<Context> {
+    let ctx = Context::builder()
+        .with::<intrinsic::Date>()
+        .with::<intrinsic::Eval>()
+        .with::<intrinsic::RegExpCompiler>()
+        .with::<intrinsic::RegExp>()
+        .with::<intrinsic::Json>()
+        .with::<intrinsic::MapSet>()
+        .with::<intrinsic::TypedArrays>()
+        .with::<intrinsic::BigInt>()
+        .build(runtime)
+        .context("failed to create QuickJS context")?;
+    ctx.with(|ctx| -> Result<()> {
+        // Eval intrinsic is required for ctx.eval() from Rust; hide eval() from config scripts.
+        ctx.globals().remove("eval")?;
+        Ok(())
+    })?;
+    Ok(ctx)
+}
 
 pub struct ScriptRuntime {
     _runtime: Runtime,
@@ -29,7 +50,7 @@ pub struct BrowserTarget {
 impl ScriptRuntime {
     pub fn from_js(js: &str) -> Result<Self> {
         let runtime = Runtime::new().context("failed to create QuickJS runtime")?;
-        let ctx = Context::full(&runtime).context("failed to create QuickJS context")?;
+        let ctx = create_sandbox_context(&runtime)?;
 
         ctx.with(|ctx| -> Result<()> {
             let globals = ctx.globals();
@@ -316,4 +337,118 @@ fn make_context_object<'js>(
     modifiers.set("cmd", context.modifiers.cmd)?;
     obj.set("modifiers", modifiers)?;
     Ok(obj)
+}
+
+#[cfg(test)]
+mod sandbox_tests {
+    use super::*;
+    use rquickjs::Runtime;
+
+    fn probe_typeof(name: &str) -> Result<String> {
+        let runtime = Runtime::new()?;
+        let ctx = create_sandbox_context(&runtime)?;
+        let js = format!(
+            "{}{}\nglobalThis.__SUPERSURFER_CONFIG__ = {{ defaultBrowser: \"chrome\", handlers: [] }};",
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        ctx.with(|ctx| -> Result<()> {
+            install_host_functions(&ctx.globals())?;
+            ctx.eval::<(), _>(js.as_bytes())?;
+            Ok(())
+        })?;
+        ctx.with(|ctx| {
+            let ty: String = ctx.eval(format!("typeof {name}").into_bytes())?;
+            Ok(ty)
+        })
+    }
+
+    #[test]
+    fn sandbox_blocks_network_and_node_apis() {
+        for api in ["fetch", "require", "os", "std", "process", "Deno"] {
+            let ty = probe_typeof(api).unwrap_or_else(|_| "error".into());
+            assert_eq!(ty, "undefined", "{api} should be unavailable");
+        }
+    }
+
+    #[test]
+    fn sandbox_exposes_expected_helpers() {
+        for api in ["host", "domain", "glob", "__evalMatch", "__domainMatch"] {
+            let ty = probe_typeof(api).unwrap();
+            assert_eq!(ty, "function", "{api} should be a function");
+        }
+    }
+
+    #[test]
+    fn sandbox_blocks_eval_promise_proxy() {
+        for api in ["eval", "Promise", "Proxy"] {
+            assert_eq!(
+                probe_typeof(api).unwrap(),
+                "undefined",
+                "{api} should be blocked"
+            );
+        }
+        assert_eq!(probe_typeof("JSON").unwrap(), "object");
+        assert_eq!(probe_typeof("Function").unwrap(), "function");
+    }
+
+    #[test]
+    fn sandbox_has_no_console() {
+        assert_eq!(probe_typeof("console").unwrap(), "undefined");
+    }
+
+    #[test]
+    fn sandbox_has_no_timers() {
+        for api in ["setTimeout", "setInterval"] {
+            assert_eq!(probe_typeof(api).unwrap(), "undefined");
+        }
+    }
+
+    #[test]
+    fn malicious_config_load_fails_cleanly() {
+        let js = format!(
+            "{}{}",
+            ScriptRuntime::helpers_prelude(),
+            "throw new Error('bad config');"
+        );
+        assert!(ScriptRuntime::from_js(&js).is_err());
+    }
+
+    #[test]
+    fn rewrite_errors_are_non_fatal() {
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "chrome",
+  handlers: [],
+  rewrite: [{{ match: host("example.com"), url: () => {{ throw new Error("boom"); }} }}],
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        let url = Url::parse("https://example.com/path").unwrap();
+        let ctx = RouteContext::default();
+        let (target, out) = rt.route(&url, &ctx).unwrap();
+        assert!(target.is_none());
+        assert_eq!(out.as_str(), "https://example.com/path");
+    }
+
+    #[test]
+    fn matcher_errors_fail_route() {
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "chrome",
+  handlers: [{{ match: () => {{ throw new Error("boom"); }}, browser: "firefox" }}],
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        let url = Url::parse("https://example.com").unwrap();
+        let ctx = RouteContext::default();
+        let err = rt.route(&url, &ctx).unwrap_err().to_string();
+        assert!(err.contains("matcher evaluation failed"));
+    }
 }
