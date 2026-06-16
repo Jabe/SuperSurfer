@@ -751,6 +751,7 @@ fn parse_desktop_exec(desktop_file: &Path) -> Option<String> {
 
 /// Parse an `Exec=` value from a `.desktop` file, skipping `env VAR=…` prefixes
 /// used by Snap/Flatpak entries.
+#[cfg(any(target_os = "linux", test))]
 fn parse_desktop_exec_value(value: &str) -> Option<String> {
     let mut tokens = value.split_whitespace().peekable();
 
