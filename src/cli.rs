@@ -50,6 +50,7 @@ pub enum Commands {
 pub fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let hot_path = args.len() == 1 && crate::input_url::is_routable_input(&args[0]);
+    let fresh_bootstrap = crate::bootstrap::ensure_ready()?;
     #[cfg(target_os = "windows")]
     if !hot_path {
         platform::attach_parent_console();
@@ -57,6 +58,10 @@ pub fn run() -> Result<()> {
 
     if hot_path {
         return platform::handle_url_arg(&args[0]);
+    }
+
+    if args.is_empty() {
+        return crate::bootstrap::welcome(fresh_bootstrap);
     }
 
     let cli = Cli::parse();

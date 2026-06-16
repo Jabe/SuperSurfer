@@ -94,6 +94,48 @@ pub fn registration_status() -> String {
     }
 }
 
+pub fn open_url_in_default_browser(url: &str) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    use std::process::Command;
+
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(url)
+            .status()
+            .context("failed to run open")?
+            .success()
+            .then_some(())
+            .context("open exited with failure")?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(url)
+            .status()
+            .context("failed to run xdg-open")?
+            .success()
+            .then_some(())
+            .context("xdg-open exited with failure")?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .status()
+            .context("failed to run start")?
+            .success()
+            .then_some(())
+            .context("start exited with failure")?;
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+    {
+        let _ = url;
+        anyhow::bail!("opening URLs is not supported on this platform yet");
+    }
+    Ok(())
+}
+
 pub fn handle_url_arg(url: &str) -> anyhow::Result<()> {
     let router = Router::new()?;
     let mut context = crate::context::Context::default();

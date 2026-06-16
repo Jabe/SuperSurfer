@@ -59,17 +59,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        if !commands.isEmpty {
+        if !commands.is_empty {
             finished = true
             runSupersurfer(args: commands)
             NSApp.terminate(nil)
             return
         }
 
-        // Default-browser mode: wait briefly for an incoming URL or file event.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+        // Wait briefly for a default-browser URL event, then run first-run bootstrap.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self, !self.finished else { return }
             self.finished = true
+            runSupersurfer(args: [])
             NSApp.terminate(nil)
         }
     }

@@ -4,6 +4,8 @@
 
 SuperSurfer registers as your OS default browser, intercepts every link open, evaluates a TypeScript routing script, and forwards the URL to the right browser/profile.
 
+**Manual:** [docs/manual.md](docs/manual.md) (also opened in your browser on first run)
+
 ## Quick start
 
 This project uses [mise](https://mise.jdx.dev/) for tool versions (Rust, rustfmt, clippy).
@@ -21,9 +23,18 @@ Or without mise tasks:
 
 ```bash
 cargo build --release
-./target/release/supersurfer init
-./target/release/supersurfer test https://github.com/org/repo
+./target/release/supersurfer          # first run: scaffolds config + opens manual
 ./target/release/supersurfer doctor
+./target/release/supersurfer test https://github.com/org/repo
+./target/release/supersurfer register
+```
+
+First run (no arguments) creates `config.ts` and `supersurfer.d.ts`, then opens the [setup guide](docs/manual.md) in your default browser. URL routing (`supersurfer https://…`) also bootstraps config silently when needed.
+
+Legacy explicit init:
+
+```bash
+./target/release/supersurfer init
 ```
 
 Config lives at:
