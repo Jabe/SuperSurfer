@@ -83,12 +83,30 @@ On Windows:
 
 ### Linux — `supersurfer`
 
-Builds a dynamically linked glibc binary. Release artifacts are built on Ubuntu 22.04 (glibc 2.35) as the minimum supported baseline; newer distros work too.
+Builds dynamically linked glibc binaries for **x86_64** and **aarch64**. Release artifacts are built on Ubuntu 22.04 (glibc 2.35) as the minimum supported baseline; newer distros work too.
 
+**x86_64 (Intel/AMD):**
 ```bash
-mise run package-linux
-cd dist/linux
-./install.sh                 # installs to ~/.local/bin + ~/.local/share/applications
+tar -xzf supersurfer-linux-x86_64.tar.gz
+cd linux
+./install.sh
+```
+
+**aarch64 (ARM, e.g. Raspberry Pi, ARM laptops):**
+```bash
+tar -xzf supersurfer-linux-aarch64.tar.gz
+cd linux-aarch64
+./install.sh
+```
+
+From source (native or cross-compile):
+```bash
+mise run package-linux          # native x86_64 on Linux
+mise run package-linux-arm      # cross-compile aarch64 (needs zig)
+```
+
+Then:
+```bash
 supersurfer init
 supersurfer register         # sets default via xdg-settings / xdg-mime
 supersurfer doctor

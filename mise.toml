@@ -48,3 +48,7 @@ run = "bash packaging/windows/build.sh"
 [tasks.package-linux]
 description = "Build Linux binary + .desktop + install.sh into dist/linux"
 run = "bash packaging/linux/build.sh"
+
+[tasks.package-linux-arm]
+description = "Cross-compile Linux ARM64 binary + packaging (requires zig)"
+run = "bash packaging/linux/build-cross.sh"
