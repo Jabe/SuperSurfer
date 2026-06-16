@@ -308,7 +308,11 @@ fn known_browsers() -> Vec<KnownBrowser> {
             None,
         )
         .linux(
-            &["chromium.desktop", "chromium-browser.desktop"],
+            &[
+                "chromium.desktop",
+                "chromium-browser.desktop",
+                "chromium_chromium.desktop",
+            ],
             Some("chromium"),
             None,
         ),
@@ -326,6 +330,7 @@ fn known_browsers() -> Vec<KnownBrowser> {
             &[
                 "firefox.desktop",
                 "firefox-esr.desktop",
+                "firefox_firefox.desktop",
                 "org.mozilla.firefox.desktop",
             ],
             None,
@@ -404,7 +409,11 @@ fn known_browsers() -> Vec<KnownBrowser> {
             Some("Microsoft Edge"),
             None,
         )
-        .linux(&["microsoft-edge.desktop"], Some("microsoft-edge"), None),
+        .linux(
+            &["microsoft-edge.desktop", "microsoft-edge-dev.desktop"],
+            Some("microsoft-edge"),
+            None,
+        ),
         browser(
             "edge-beta",
             "Microsoft Edge Beta",
@@ -441,7 +450,7 @@ fn known_browsers() -> Vec<KnownBrowser> {
             None,
         )
         .linux(
-            &["brave-browser.desktop"],
+            &["brave-browser.desktop", "brave_brave.desktop"],
             Some("BraveSoftware/Brave-Browser"),
             None,
         ),
@@ -520,7 +529,11 @@ fn known_browsers() -> Vec<KnownBrowser> {
             Some("com.operasoftware.Opera"),
             None,
         )
-        .linux(&["opera.desktop"], Some("opera"), None),
+        .linux(
+            &["opera.desktop", "opera_opera.desktop"],
+            Some("opera"),
+            None,
+        ),
         browser(
             "opera-gx",
             "Opera GX",
@@ -667,6 +680,16 @@ fn linux_application_dirs() -> Vec<PathBuf> {
     if let Some(base) = directories::BaseDirs::new() {
         dirs.push(base.data_local_dir().join("applications"));
     }
+    // Always search standard install locations. CLI sessions often omit snap/flatpak
+    // paths from XDG_DATA_DIRS even when those browsers are the system default.
+    for path in [
+        "/usr/local/share/applications",
+        "/usr/share/applications",
+        "/var/lib/snapd/desktop/applications",
+        "/var/lib/flatpak/exports/share/applications",
+    ] {
+        dirs.push(PathBuf::from(path));
+    }
     let xdg_data_dirs = std::env::var("XDG_DATA_DIRS")
         .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
     for entry in xdg_data_dirs.split(':') {
@@ -720,11 +743,29 @@ fn parse_desktop_exec(desktop_file: &Path) -> Option<String> {
             continue;
         }
         if let Some(value) = trimmed.strip_prefix("Exec=") {
-            // Take the executable token, dropping freedesktop field codes (%u, %U, ...).
-            let exec = value
-                .split_whitespace()
-                .find(|token| !token.starts_with('%'))?;
-            return Some(exec.to_string());
+            return parse_desktop_exec_value(value);
+        }
+    }
+    None
+}
+
+/// Parse an `Exec=` value from a `.desktop` file, skipping `env VAR=…` prefixes
+/// used by Snap/Flatpak entries.
+fn parse_desktop_exec_value(value: &str) -> Option<String> {
+    let mut tokens = value.split_whitespace().peekable();
+
+    if tokens.peek() == Some(&"env") {
+        tokens.next();
+        while tokens.peek().is_some_and(|token| {
+            token.contains('=') && !token.starts_with('/') && !token.starts_with('%')
+        }) {
+            tokens.next();
+        }
+    }
+
+    for token in tokens {
+        if !token.starts_with('%') {
+            return Some(token.to_string());
         }
     }
     None
@@ -738,16 +779,39 @@ fn discover_profiles_linux(spec: &KnownBrowser) -> Result<Vec<BrowserProfile>> {
     match spec.profile_kind {
         ProfileKind::None => Ok(vec![]),
         ProfileKind::Gecko => {
-            let Some(relative) = spec.linux_gecko_dir else {
-                return Ok(vec![]);
-            };
-            discover_gecko_profiles(&base.home_dir().join(relative).join("profiles.ini"))
+            let mut candidates = Vec::new();
+            if let Some(relative) = spec.linux_gecko_dir {
+                candidates.push(base.home_dir().join(relative).join("profiles.ini"));
+            }
+            if spec.id == "firefox" {
+                candidates.push(
+                    base.home_dir()
+                        .join("snap/firefox/common/.mozilla/firefox/profiles.ini"),
+                );
+            }
+            for path in candidates {
+                let profiles = discover_gecko_profiles(&path)?;
+                if !profiles.is_empty() {
+                    return Ok(profiles);
+                }
+            }
+            Ok(vec![])
         }
         ProfileKind::Chromium => {
-            let Some(relative) = spec.linux_config_dir else {
-                return Ok(vec![]);
-            };
-            discover_chromium_profiles(&base.config_dir().join(relative))
+            let mut candidates = Vec::new();
+            if let Some(relative) = spec.linux_config_dir {
+                candidates.push(base.config_dir().join(relative));
+            }
+            if spec.id == "chromium" {
+                candidates.push(base.home_dir().join("snap/chromium/common/chromium"));
+            }
+            for path in candidates {
+                let profiles = discover_chromium_profiles(&path)?;
+                if !profiles.is_empty() {
+                    return Ok(profiles);
+                }
+            }
+            Ok(vec![])
         }
     }
 }
@@ -937,5 +1001,31 @@ mod tests {
         assert_eq!(browser_id_for_prog_id("BraveHTML"), Some("brave"));
         assert_eq!(browser_id_for_prog_id("MSEdgeHTM"), Some("edge"));
         assert_eq!(browser_id_for_prog_id("FirefoxURL"), Some("firefox"));
+    }
+
+    #[test]
+    fn maps_linux_desktop_ids() {
+        assert_eq!(
+            browser_id_for_desktop_id("firefox_firefox.desktop"),
+            Some("firefox")
+        );
+        assert_eq!(
+            browser_id_for_desktop_id("chromium_chromium.desktop"),
+            Some("chromium")
+        );
+    }
+
+    #[test]
+    fn parses_snap_desktop_exec_lines() {
+        assert_eq!(
+            parse_desktop_exec_value(
+                "env BAMF_DESKTOP_FILE_HINT=/var/lib/snapd/desktop/applications/firefox_firefox.desktop /snap/bin/firefox %u"
+            ),
+            Some("/snap/bin/firefox".to_string())
+        );
+        assert_eq!(
+            parse_desktop_exec_value("google-chrome-stable %U"),
+            Some("google-chrome-stable".to_string())
+        );
     }
 }
