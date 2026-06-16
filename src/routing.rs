@@ -61,17 +61,23 @@ impl Router {
         let cleaning_mode = self.config.runtime.url_cleaning_mode()?;
         url_clean::clean_url(&mut url, &cleaning_mode)?;
 
-        let (target, routed_url) = match self.config.runtime.route(&url, context)? {
-            (Some(target), rewritten) => (target, rewritten),
-            (None, rewritten) => (
-                BrowserTarget {
-                    name: Some(self.config.runtime.default_browser()?),
-                    private: false,
-                    app: None,
-                    exe: None,
-                },
-                rewritten,
-            ),
+        let (target, routed_url, script_fallback) = match self.config.runtime.route(&url, context) {
+            Ok((target, rewritten)) => (target, rewritten, false),
+            Err(err) => {
+                eprintln!("routing script error: {err}. Falling back to defaultBrowser.");
+                (None, url.clone(), true)
+            }
+        };
+
+        let target = if let Some(target) = target {
+            target
+        } else {
+            BrowserTarget {
+                name: Some(self.config.runtime.default_browser()?),
+                private: false,
+                app: None,
+                exe: None,
+            }
         };
 
         let (
@@ -82,8 +88,11 @@ impl Router {
             private,
             app_path,
             matched_handler,
-            fallback,
+            mut fallback,
         ) = self.resolve_target(target)?;
+        if script_fallback {
+            fallback = true;
+        }
 
         let decision = RouteDecision {
             input_url,

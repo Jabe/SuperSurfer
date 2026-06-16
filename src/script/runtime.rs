@@ -5,7 +5,7 @@ use rquickjs::context::intrinsic;
 use rquickjs::{Array, CatchResultExt, Context, Function, Object, Runtime, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use url::Url;
 
@@ -13,6 +13,31 @@ const EVAL_TIMEOUT: Duration = Duration::from_millis(250);
 
 static GLOB_MATCHERS: LazyLock<Mutex<HashMap<String, GlobMatcher>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+struct EvalBudget {
+    started: Mutex<Instant>,
+}
+
+fn new_runtime() -> Result<(Runtime, Arc<EvalBudget>)> {
+    let runtime = Runtime::new().context("failed to create QuickJS runtime")?;
+    let budget = Arc::new(EvalBudget {
+        started: Mutex::new(Instant::now()),
+    });
+    let budget_for_interrupt = Arc::clone(&budget);
+    runtime.set_interrupt_handler(Some(Box::new(move || {
+        budget_for_interrupt
+            .started
+            .lock()
+            .is_ok_and(|started| started.elapsed() > EVAL_TIMEOUT)
+    })));
+    Ok((runtime, budget))
+}
+
+fn reset_budget(budget: &EvalBudget) {
+    if let Ok(mut started) = budget.started.lock() {
+        *started = Instant::now();
+    }
+}
 
 fn create_sandbox_context(runtime: &Runtime) -> Result<Context> {
     let ctx = Context::builder()
@@ -37,6 +62,7 @@ fn create_sandbox_context(runtime: &Runtime) -> Result<Context> {
 pub struct ScriptRuntime {
     _runtime: Runtime,
     ctx: Context,
+    budget: Arc<EvalBudget>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,9 +75,10 @@ pub struct BrowserTarget {
 
 impl ScriptRuntime {
     pub fn from_js(js: &str) -> Result<Self> {
-        let runtime = Runtime::new().context("failed to create QuickJS runtime")?;
+        let (runtime, budget) = new_runtime()?;
         let ctx = create_sandbox_context(&runtime)?;
 
+        reset_budget(&budget);
         ctx.with(|ctx| -> Result<()> {
             let globals = ctx.globals();
             install_host_functions(&globals)?;
@@ -64,6 +91,7 @@ impl ScriptRuntime {
         Ok(Self {
             _runtime: runtime,
             ctx,
+            budget,
         })
     }
 
@@ -92,16 +120,9 @@ impl ScriptRuntime {
     }
 
     pub fn route(&self, url: &Url, context: &RouteContext) -> Result<(Option<BrowserTarget>, Url)> {
-        let started = Instant::now();
+        reset_budget(&self.budget);
         let working = RefCell::new(url.clone());
-        let result = self.route_inner(&working, context);
-        if started.elapsed() > EVAL_TIMEOUT {
-            anyhow::bail!(
-                "routing eval exceeded {} ms budget",
-                EVAL_TIMEOUT.as_millis()
-            );
-        }
-        let target = result?;
+        let target = self.route_inner(&working, context)?;
         Ok((target, working.into_inner()))
     }
 
@@ -450,5 +471,27 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
         let ctx = RouteContext::default();
         let err = rt.route(&url, &ctx).unwrap_err().to_string();
         assert!(err.contains("matcher evaluation failed"));
+    }
+
+    #[test]
+    fn route_interrupts_long_running_matchers() {
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "chrome",
+  handlers: [{{ match: () => {{ while (true) {{}} }}, browser: "firefox" }}],
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        let url = Url::parse("https://example.com").unwrap();
+        let ctx = RouteContext::default();
+        let started = Instant::now();
+        assert!(rt.route(&url, &ctx).is_err());
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "interrupt handler should stop runaway matchers quickly"
+        );
     }
 }
