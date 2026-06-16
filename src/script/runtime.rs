@@ -287,6 +287,12 @@ fn install_host_functions(globals: &Object<'_>) -> Result<()> {
             path_match(&pattern, &path)
         })?,
     )?;
+    globals.set(
+        "__consoleLog",
+        Function::new(globals.ctx().clone(), |message: String| {
+            crate::logging::append_script_log(&message).ok();
+        })?,
+    )?;
     Ok(())
 }
 
@@ -414,8 +420,29 @@ mod sandbox_tests {
     }
 
     #[test]
-    fn sandbox_has_no_console() {
-        assert_eq!(probe_typeof("console").unwrap(), "undefined");
+    fn sandbox_exposes_console_log() {
+        assert_eq!(probe_typeof("console").unwrap(), "object");
+        assert_eq!(probe_typeof("console.log").unwrap(), "function");
+    }
+
+    #[test]
+    fn console_log_writes_to_script_log() {
+        let js = format!(
+            "{}{}\nglobalThis.__SUPERSURFER_CONFIG__ = {{ defaultBrowser: \"chrome\", handlers: [] }};",
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        rt.ctx
+            .with(|ctx| -> Result<()> {
+                ctx.eval::<(), _>("console.log('hello', 42);")?;
+                Ok(())
+            })
+            .unwrap();
+        let path = crate::logging::script_log_file().unwrap();
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("hello"));
+        assert!(content.contains("42"));
     }
 
     #[test]

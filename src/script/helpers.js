@@ -47,3 +47,9 @@ function __evalMatch(matcher, url, ctx) {
 }
 
 globalThis.__evalMatch = __evalMatch;
+
+globalThis.console = {
+  log(...args) {
+    globalThis.__consoleLog(args.map((part) => String(part)).join(" "));
+  },
+};
