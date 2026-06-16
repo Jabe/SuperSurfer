@@ -48,6 +48,16 @@ export default {
 } satisfies RouterConfig;
 ```
 
+## From Finicky
+
+There is no built-in migrate command. SuperSurfer already supports most Finicky config patterns (`{ name, profile }` browser targets, dynamic `browser` handlers, `rewrite` rules). Copy your `~/.finicky.js` into `config.ts`, add `import type { RouterConfig } from "./supersurfer"` and `} satisfies RouterConfig`, then adjust:
+
+- `finicky.matchHostnames([...])` → a local `matchHostnames()` helper, or `host` / `suffix` / `regex` matchers
+- `finicky.opener` → `ctx.opener`
+- custom `rewrite` + built-in URL cleaning may overlap — set `urlCleaning: "off"` if needed
+
+An LLM plus `supersurfer.d.ts` (written by `supersurfer init`) is the intended migration path. Validate with `supersurfer doctor` and `supersurfer test <url>`.
+
 ## Packaging (default browser)
 
 ### macOS — `SuperSurfer.app`
