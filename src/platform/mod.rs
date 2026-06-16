@@ -1,11 +1,15 @@
 use crate::context::Opener;
 use crate::routing::Router;
 
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
+#[cfg(target_os = "linux")]
+pub use linux::desktop_file_path;
 #[cfg(target_os = "macos")]
 pub use macos::app_bundle_path;
 #[cfg(target_os = "windows")]
@@ -22,7 +26,11 @@ pub fn system_default_browser_id(
     {
         windows::system_default_browser_id(registry)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::system_default_browser_id(registry)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = registry;
         None
@@ -38,7 +46,11 @@ pub fn detect_opener() -> Option<Opener> {
     {
         windows::detect_opener()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::detect_opener()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         None
     }
@@ -53,7 +65,11 @@ pub fn register_default_browser() -> anyhow::Result<()> {
     {
         windows::register_default_browser()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::register_default_browser()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         anyhow::bail!("default browser registration is not supported on this platform yet")
     }
@@ -68,7 +84,11 @@ pub fn registration_status() -> String {
     {
         windows::registration_status()
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::registration_status()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         "unsupported platform".to_string()
     }

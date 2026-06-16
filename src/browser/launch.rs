@@ -1,17 +1,17 @@
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use crate::browser::registry::is_chromium_browser;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use crate::browser::registry::is_gecko_browser;
 use crate::browser::registry::BrowserRegistry;
 use crate::routing::RouteDecision;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use anyhow::Context as _;
 use anyhow::Result;
 #[cfg(target_os = "macos")]
 use std::fs;
 #[cfg(target_os = "macos")]
 use std::path::{Path, PathBuf};
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::process::Command;
 
 pub fn launch_browser(_registry: &BrowserRegistry, decision: &RouteDecision) -> Result<()> {
@@ -31,11 +31,48 @@ pub fn launch_browser(_registry: &BrowserRegistry, decision: &RouteDecision) -> 
             .context("no application path resolved for browser launch")?;
         launch_windows(app_path, decision)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[cfg(target_os = "linux")]
+    {
+        let app_path = decision
+            .app_path
+            .as_ref()
+            .context("no application path resolved for browser launch")?;
+        launch_linux(app_path, decision)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
     {
         let _ = decision;
         anyhow::bail!("browser launch is not supported on this platform yet")
     }
+}
+
+#[cfg(target_os = "linux")]
+fn launch_linux(exec: &str, decision: &RouteDecision) -> Result<()> {
+    let mut cmd = Command::new(exec);
+    if let Some(profile_dir) = chromium_profile_arg(
+        decision.browser_id.as_str(),
+        decision.profile_directory.as_deref(),
+    ) {
+        cmd.arg(profile_dir);
+    } else if let Some(profile) = decision.profile.as_deref() {
+        if is_gecko_browser(decision.browser_id.as_str()) {
+            cmd.arg("-P");
+            cmd.arg(profile);
+        }
+    }
+    if decision.private {
+        if is_gecko_browser(decision.browser_id.as_str()) {
+            cmd.arg("--private-window");
+        } else {
+            cmd.arg("--incognito");
+        }
+    }
+    cmd.arg(&decision.cleaned_url);
+    cmd.status()
+        .context("failed to launch browser")?
+        .success()
+        .then_some(())
+        .context("browser launcher exited with failure")
 }
 
 #[cfg(target_os = "macos")]
@@ -124,7 +161,7 @@ fn launch_windows(exe_path: &str, decision: &RouteDecision) -> Result<()> {
         .context("browser launcher exited with failure")
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn chromium_profile_arg(browser_id: &str, profile: Option<&str>) -> Option<String> {
     if !is_chromium_browser(browser_id) {
         return None;

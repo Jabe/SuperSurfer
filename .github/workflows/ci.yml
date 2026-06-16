@@ -67,6 +67,32 @@ jobs:
           path: dist/supersurfer.exe
           if-no-files-found: error
 
+  build-linux:
+    name: Build Linux
+    # Pin to the oldest supported Ubuntu LTS runner so the dynamically linked
+    # glibc binary keeps a low compatibility floor ("minimum ubuntu").
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build Linux package
+        run: bash packaging/linux/build.sh
+
+      - name: Verify artifact
+        run: test -f dist/linux/supersurfer
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: supersurfer-linux
+          path: dist/supersurfer-linux-*.tar.gz
+          if-no-files-found: error
+
   build-macos:
     name: Build macOS
     runs-on: macos-14

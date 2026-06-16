@@ -129,6 +129,10 @@ fn cmd_doctor() -> Result<()> {
     if let Ok(exe) = platform::exe_path() {
         println!("Executable: {}", exe.display());
     }
+    #[cfg(target_os = "linux")]
+    if let Some(desktop) = platform::desktop_file_path() {
+        println!("Desktop entry: {}", desktop.display());
+    }
     Ok(())
 }
 

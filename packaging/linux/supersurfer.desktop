@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SuperSurfer
+Comment=Browser router
+Exec=__EXEC__ %u
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;
+NoDisplay=false
+StartupNotify=false

@@ -44,3 +44,7 @@ run = "/Applications/SuperSurfer.app/Contents/MacOS/SuperSurfer register"
 [tasks.package-windows]
 description = "Build supersurfer.exe into dist/ (native on Windows, cross-compile elsewhere)"
 run = "bash packaging/windows/build.sh"
+
+[tasks.package-linux]
+description = "Build Linux binary + .desktop + install.sh into dist/linux"
+run = "bash packaging/linux/build.sh"

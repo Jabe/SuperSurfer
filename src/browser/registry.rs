@@ -1,11 +1,11 @@
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::fs;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use std::path::Path;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::path::PathBuf;
 
 #[cfg(target_os = "windows")]
@@ -83,6 +83,11 @@ impl BrowserRegistry {
         browser_id_for_prog_id(prog_id)
             .map(str::to_string)
             .filter(|id| self.browsers.contains_key(id))
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn id_for_desktop_id(&self, desktop_id: &str) -> Option<String> {
+        browser_id_for_desktop_id(desktop_id).map(str::to_string)
     }
 
     pub fn resolve(&self, id: &str, profile: Option<&str>) -> Result<ResolvedBrowser> {
@@ -211,6 +216,19 @@ pub fn browser_id_for_prog_id(prog_id: &str) -> Option<&'static str> {
     None
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn browser_id_for_desktop_id(desktop_id: &str) -> Option<&'static str> {
+    let needle = desktop_id.trim_end_matches(".desktop");
+    for spec in known_browsers() {
+        for id in spec.linux_desktop_ids {
+            if id.trim_end_matches(".desktop").eq_ignore_ascii_case(needle) {
+                return Some(spec.id);
+            }
+        }
+    }
+    None
+}
+
 struct KnownBrowser {
     id: &'static str,
     display_name: &'static str,
@@ -224,6 +242,26 @@ struct KnownBrowser {
     chromium_data_dir: Option<&'static str>,
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     gecko_profiles_ini: Option<&'static str>,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    linux_desktop_ids: &'static [&'static str],
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    linux_config_dir: Option<&'static str>,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    linux_gecko_dir: Option<&'static str>,
+}
+
+impl KnownBrowser {
+    fn linux(
+        mut self,
+        desktop_ids: &'static [&'static str],
+        config_dir: Option<&'static str>,
+        gecko_dir: Option<&'static str>,
+    ) -> Self {
+        self.linux_desktop_ids = desktop_ids;
+        self.linux_config_dir = config_dir;
+        self.linux_gecko_dir = gecko_dir;
+        self
+    }
 }
 
 fn known_browsers() -> Vec<KnownBrowser> {
@@ -247,7 +285,8 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Chromium,
             Some("Google/Chrome"),
             None,
-        ),
+        )
+        .linux(&["google-chrome.desktop"], Some("google-chrome"), None),
         browser(
             "chrome-canary",
             "Google Chrome Canary",
@@ -267,6 +306,11 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Chromium,
             Some("Chromium"),
             None,
+        )
+        .linux(
+            &["chromium.desktop", "chromium-browser.desktop"],
+            Some("chromium"),
+            None,
         ),
         browser(
             "firefox",
@@ -277,6 +321,15 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Gecko,
             None,
             Some("Firefox/profiles.ini"),
+        )
+        .linux(
+            &[
+                "firefox.desktop",
+                "firefox-esr.desktop",
+                "org.mozilla.firefox.desktop",
+            ],
+            None,
+            Some(".mozilla/firefox"),
         ),
         browser(
             "firefox-developer-edition",
@@ -287,6 +340,11 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Gecko,
             None,
             Some("Firefox/profiles.ini"),
+        )
+        .linux(
+            &["firefox-developer-edition.desktop"],
+            None,
+            Some(".mozilla/firefox"),
         ),
         browser(
             "zen",
@@ -297,6 +355,15 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Gecko,
             None,
             Some("zen/profiles.ini"),
+        )
+        .linux(
+            &[
+                "zen.desktop",
+                "zen-browser.desktop",
+                "app.zen_browser.zen.desktop",
+            ],
+            None,
+            Some(".zen"),
         ),
         browser(
             "waterfox",
@@ -307,7 +374,8 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Gecko,
             None,
             Some("Waterfox/profiles.ini"),
-        ),
+        )
+        .linux(&["waterfox.desktop"], None, Some(".waterfox")),
         browser(
             "tor",
             "Tor Browser",
@@ -317,6 +385,14 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Gecko,
             None,
             Some("Tor Browser/Browser/TorBrowser/Data/Browser/profiles.ini"),
+        )
+        .linux(
+            &[
+                "torbrowser.desktop",
+                "org.torproject.torbrowser-launcher.desktop",
+            ],
+            None,
+            None,
         ),
         browser(
             "edge",
@@ -327,7 +403,8 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Chromium,
             Some("Microsoft Edge"),
             None,
-        ),
+        )
+        .linux(&["microsoft-edge.desktop"], Some("microsoft-edge"), None),
         browser(
             "edge-beta",
             "Microsoft Edge Beta",
@@ -336,6 +413,11 @@ fn known_browsers() -> Vec<KnownBrowser> {
             &["com.microsoft.edgemac.Beta"],
             ProfileKind::Chromium,
             Some("Microsoft Edge Beta"),
+            None,
+        )
+        .linux(
+            &["microsoft-edge-beta.desktop"],
+            Some("microsoft-edge-beta"),
             None,
         ),
         browser(
@@ -357,6 +439,11 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Chromium,
             Some("BraveSoftware/Brave-Browser"),
             None,
+        )
+        .linux(
+            &["brave-browser.desktop"],
+            Some("BraveSoftware/Brave-Browser"),
+            None,
         ),
         browser(
             "brave-beta",
@@ -367,6 +454,11 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Chromium,
             Some("BraveSoftware/Brave-Browser-Beta"),
             None,
+        )
+        .linux(
+            &["brave-browser-beta.desktop"],
+            Some("BraveSoftware/Brave-Browser-Beta"),
+            None,
         ),
         browser(
             "brave-nightly",
@@ -375,6 +467,11 @@ fn known_browsers() -> Vec<KnownBrowser> {
             &["Brave Browser Nightly.app"],
             &["com.brave.Browser.nightly"],
             ProfileKind::Chromium,
+            Some("BraveSoftware/Brave-Browser-Nightly"),
+            None,
+        )
+        .linux(
+            &["brave-browser-nightly.desktop"],
             Some("BraveSoftware/Brave-Browser-Nightly"),
             None,
         ),
@@ -407,6 +504,11 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Chromium,
             Some("Vivaldi"),
             None,
+        )
+        .linux(
+            &["vivaldi-stable.desktop", "vivaldi.desktop"],
+            Some("vivaldi"),
+            None,
         ),
         browser(
             "opera",
@@ -417,7 +519,8 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Chromium,
             Some("com.operasoftware.Opera"),
             None,
-        ),
+        )
+        .linux(&["opera.desktop"], Some("opera"), None),
         browser(
             "opera-gx",
             "Opera GX",
@@ -487,6 +590,11 @@ fn known_browsers() -> Vec<KnownBrowser> {
             ProfileKind::Chromium,
             Some("Chromium"),
             None,
+        )
+        .linux(
+            &["ungoogled-chromium.desktop", "chromium.desktop"],
+            Some("chromium"),
+            None,
         ),
     ]
 }
@@ -511,6 +619,9 @@ fn browser(
         profile_kind,
         chromium_data_dir,
         gecko_profiles_ini,
+        linux_desktop_ids: &[],
+        linux_config_dir: None,
+        linux_gecko_dir: None,
     }
 }
 
@@ -531,11 +642,114 @@ fn discover_inner(fresh: bool) -> Result<BrowserRegistry> {
     discover_windows_cached(fresh)
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+#[cfg(target_os = "linux")]
+fn discover_inner(_fresh: bool) -> Result<BrowserRegistry> {
+    let dirs = linux_application_dirs();
+    let mut browsers = HashMap::new();
+    for spec in known_browsers() {
+        if let Some(install) = discover_browser_linux(&spec, &dirs)? {
+            browsers.insert(spec.id.to_string(), install);
+        }
+    }
+    Ok(BrowserRegistry { browsers })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn discover_inner(_fresh: bool) -> Result<BrowserRegistry> {
     Ok(BrowserRegistry {
         browsers: HashMap::new(),
     })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_application_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(base) = directories::BaseDirs::new() {
+        dirs.push(base.data_local_dir().join("applications"));
+    }
+    let xdg_data_dirs = std::env::var("XDG_DATA_DIRS")
+        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+    for entry in xdg_data_dirs.split(':') {
+        if entry.is_empty() {
+            continue;
+        }
+        dirs.push(Path::new(entry).join("applications"));
+    }
+    dirs.dedup();
+    dirs
+}
+
+#[cfg(target_os = "linux")]
+fn discover_browser_linux(spec: &KnownBrowser, dirs: &[PathBuf]) -> Result<Option<BrowserInstall>> {
+    let desktop_file = spec.linux_desktop_ids.iter().find_map(|id| {
+        dirs.iter()
+            .map(|dir| dir.join(id))
+            .find(|path| path.exists())
+    });
+
+    let Some(desktop_file) = desktop_file else {
+        return Ok(None);
+    };
+
+    let Some(exec) = parse_desktop_exec(&desktop_file) else {
+        return Ok(None);
+    };
+
+    let profiles = discover_profiles_linux(spec)?;
+
+    Ok(Some(BrowserInstall {
+        id: spec.id.to_string(),
+        display_name: spec.display_name.to_string(),
+        app_path: Some(exec),
+        bundle_id: None,
+        profiles,
+    }))
+}
+
+#[cfg(target_os = "linux")]
+fn parse_desktop_exec(desktop_file: &Path) -> Option<String> {
+    let content = fs::read_to_string(desktop_file).ok()?;
+    let mut in_entry = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_entry = trimmed == "[Desktop Entry]";
+            continue;
+        }
+        if !in_entry {
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("Exec=") {
+            // Take the executable token, dropping freedesktop field codes (%u, %U, ...).
+            let exec = value
+                .split_whitespace()
+                .find(|token| !token.starts_with('%'))?;
+            return Some(exec.to_string());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn discover_profiles_linux(spec: &KnownBrowser) -> Result<Vec<BrowserProfile>> {
+    let Some(base) = directories::BaseDirs::new() else {
+        return Ok(vec![]);
+    };
+    match spec.profile_kind {
+        ProfileKind::None => Ok(vec![]),
+        ProfileKind::Gecko => {
+            let Some(relative) = spec.linux_gecko_dir else {
+                return Ok(vec![]);
+            };
+            discover_gecko_profiles(&base.home_dir().join(relative).join("profiles.ini"))
+        }
+        ProfileKind::Chromium => {
+            let Some(relative) = spec.linux_config_dir else {
+                return Ok(vec![]);
+            };
+            discover_chromium_profiles(&base.config_dir().join(relative))
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -631,7 +845,7 @@ fn discover_profiles(spec: &KnownBrowser, _app_path: &Path) -> Result<Vec<Browse
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn discover_gecko_profiles(ini_path: &Path) -> Result<Vec<BrowserProfile>> {
     if !ini_path.exists() {
         return Ok(vec![]);
@@ -665,7 +879,7 @@ fn discover_gecko_profiles(ini_path: &Path) -> Result<Vec<BrowserProfile>> {
     Ok(profiles)
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn discover_chromium_profiles(support_dir: &Path) -> Result<Vec<BrowserProfile>> {
     let state_path = support_dir.join("Local State");
     if !state_path.exists() {

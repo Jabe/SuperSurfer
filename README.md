@@ -1,6 +1,6 @@
 # SuperSurfer
 
-**One config. Every browser. macOS + Windows.**
+**One config. Every browser. macOS + Windows + Linux.**
 
 SuperSurfer registers as your OS default browser, intercepts every link open, evaluates a TypeScript routing script, and forwards the URL to the right browser/profile.
 
@@ -30,6 +30,7 @@ Config lives at:
 
 - macOS: `~/Library/Application Support/SuperSurfer/config.ts`
 - Windows: `%APPDATA%\SuperSurfer\config.ts`
+- Linux: `~/.config/SuperSurfer/config.ts`
 
 ## Example config
 
@@ -80,6 +81,21 @@ On Windows:
 
 `init --register` writes `StartMenuInternet` registry entries so SuperSurfer appears in **Settings → Apps → Default apps**. Search for SuperSurfer, open it, then click **Set default** (or assign HTTP, HTTPS, `.htm`, and `.html` individually). The old “Web browser” picker was removed in Windows 11.
 
+### Linux — `supersurfer`
+
+Builds a dynamically linked glibc binary. Release artifacts are built on Ubuntu 22.04 (glibc 2.35) as the minimum supported baseline; newer distros work too.
+
+```bash
+mise run package-linux
+cd dist/linux
+./install.sh                 # installs to ~/.local/bin + ~/.local/share/applications
+supersurfer init
+supersurfer register         # sets default via xdg-settings / xdg-mime
+supersurfer doctor
+```
+
+`register` installs `supersurfer.desktop` into `~/.local/share/applications/` and runs `xdg-settings set default-web-browser supersurfer.desktop` (with an `xdg-mime` fallback for `http`/`https`). Native browsers are discovered via `.desktop` files in the XDG application directories; Flatpak/Snap browsers are not yet supported.
+
 ## CLI
 
 | Command | Purpose |
@@ -91,7 +107,7 @@ On Windows:
 | `supersurfer logs` | Tail decision log |
 | `supersurfer update-rules` | Fetch signed URL-cleaning rules (planned) |
 
-When registered as the default browser, the OS invokes the packaged app with the URL (macOS: `SuperSurfer.app`; Windows: `supersurfer.exe "%1"`).
+When registered as the default browser, the OS invokes the packaged app with the URL (macOS: `SuperSurfer.app`; Windows: `supersurfer.exe "%1"`; Linux: `supersurfer %u` via `supersurfer.desktop`).
 
 ## Architecture
 
@@ -114,7 +130,8 @@ This is an initial implementation of the browser router spec:
 - Built-in URL cleaning (Outlook safelinks, Google redirects, UTM stripping)
 - macOS `SuperSurfer.app` bundle + Launch Services / duti registration
 - Windows `supersurfer.exe` + registry browser registration
-- macOS browser discovery + launch
+- Linux `supersurfer` binary + `.desktop` / xdg-settings registration
+- macOS, Windows, and Linux browser discovery + launch
 - CLI: `init`, `doctor`, `test`, `logs`
 
 **Not yet implemented:** signed/notarized distribution, signed rules updates.
