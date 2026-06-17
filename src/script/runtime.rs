@@ -305,11 +305,29 @@ fn domain_match(hostname: &str, domain: &str) -> bool {
 }
 
 fn glob_match(pattern: &str, target: &str) -> bool {
-    let mut guard = GLOB_MATCHERS.lock().unwrap();
-    let matcher = guard
-        .entry(pattern.to_string())
-        .or_insert_with(|| Glob::new(pattern).unwrap().compile_matcher());
-    matcher.is_match(target)
+    // Recover from a poisoned lock rather than panicking inside a QuickJS host
+    // callback (which would unwind through C frames and abort the process).
+    let mut guard = GLOB_MATCHERS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(matcher) = guard.get(pattern) {
+        return matcher.is_match(target);
+    }
+    // A malformed pattern from user config must degrade to "no match" so routing
+    // can fall back to the default browser, not abort on every link click.
+    match Glob::new(pattern) {
+        Ok(glob) => {
+            let matcher = glob.compile_matcher();
+            let is_match = matcher.is_match(target);
+            guard.insert(pattern.to_string(), matcher);
+            is_match
+        }
+        Err(err) => {
+            crate::logging::append_script_log(&format!("invalid glob pattern {pattern:?}: {err}"))
+                .ok();
+            false
+        }
+    }
 }
 
 fn path_match(pattern: &str, path: &str) -> bool {
@@ -498,6 +516,33 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
         let ctx = RouteContext::default();
         let err = rt.route(&url, &ctx).unwrap_err().to_string();
         assert!(err.contains("matcher evaluation failed"));
+    }
+
+    #[test]
+    fn invalid_glob_pattern_does_not_panic() {
+        // Malformed user-config patterns must degrade to "no match", never panic.
+        assert!(!glob_match("[invalid", "example.com/path"));
+        assert!(!glob_match("a[b-", "example.com/path"));
+        // A valid (if unusual) pattern must still not panic.
+        let _ = glob_match("***", "example.com/path");
+    }
+
+    #[test]
+    fn malformed_glob_in_config_falls_back_to_default() {
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "chrome",
+  handlers: [{{ match: glob("[invalid"), browser: "firefox" }}],
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        let url = Url::parse("https://example.com").unwrap();
+        let ctx = RouteContext::default();
+        let (target, _) = rt.route(&url, &ctx).unwrap();
+        assert!(target.is_none(), "invalid glob should not match");
     }
 
     #[test]
