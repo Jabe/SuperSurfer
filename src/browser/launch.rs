@@ -1,6 +1,6 @@
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use crate::browser::registry::is_chromium_browser;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use crate::browser::registry::is_gecko_browser;
 use crate::browser::registry::BrowserRegistry;
 use crate::routing::RouteDecision;
@@ -61,10 +61,8 @@ fn launch_linux(exec: &str, decision: &RouteDecision) -> Result<()> {
         }
     }
     if decision.private {
-        if is_gecko_browser(decision.browser_id.as_str()) {
-            cmd.arg("--private-window");
-        } else {
-            cmd.arg("--incognito");
+        if let Some(flag) = private_window_flag(decision.browser_id.as_str()) {
+            cmd.arg(flag);
         }
     }
     cmd.arg(&decision.cleaned_url);
@@ -90,7 +88,11 @@ fn launch_macos(app_path: &str, decision: &RouteDecision) -> Result<()> {
         }
     }
     if decision.private {
-        browser_args.push("--private".to_string());
+        // Safari and other non-Chromium/Gecko browsers have no documented
+        // command-line private-mode flag, so only pass one where it works.
+        if let Some(flag) = private_window_flag(decision.browser_id.as_str()) {
+            browser_args.push(flag.to_string());
+        }
     }
 
     let status = if browser_args.is_empty() {
@@ -149,9 +151,16 @@ fn launch_windows(exe_path: &str, decision: &RouteDecision) -> Result<()> {
         decision.profile_directory.as_deref(),
     ) {
         cmd.arg(profile_dir);
+    } else if let Some(profile) = decision.profile.as_deref() {
+        if is_gecko_browser(decision.browser_id.as_str()) {
+            cmd.arg("-P");
+            cmd.arg(profile);
+        }
     }
     if decision.private {
-        cmd.arg("--inprivate");
+        if let Some(flag) = private_window_flag(decision.browser_id.as_str()) {
+            cmd.arg(flag);
+        }
     }
     cmd.arg(browser_launch_arg(&decision.cleaned_url));
     cmd.status()
@@ -167,6 +176,37 @@ fn chromium_profile_arg(browser_id: &str, profile: Option<&str>) -> Option<Strin
         return None;
     }
     profile.map(|dir| format!("--profile-directory={dir}"))
+}
+
+/// The command-line flag that opens a private/incognito window for the given
+/// browser, or `None` if the browser has no documented one. Chrome/Brave/Vivaldi
+/// use `--incognito`, Edge uses `--inprivate`, Firefox/Gecko use `--private-window`.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn private_window_flag(browser_id: &str) -> Option<&'static str> {
+    if is_gecko_browser(browser_id) {
+        Some("--private-window")
+    } else if browser_id == "edge" {
+        Some("--inprivate")
+    } else if is_chromium_browser(browser_id) {
+        Some("--incognito")
+    } else {
+        None
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+mod tests {
+    use super::private_window_flag;
+
+    #[test]
+    fn private_flag_is_browser_specific() {
+        assert_eq!(private_window_flag("chrome"), Some("--incognito"));
+        assert_eq!(private_window_flag("brave"), Some("--incognito"));
+        assert_eq!(private_window_flag("edge"), Some("--inprivate"));
+        assert_eq!(private_window_flag("firefox"), Some("--private-window"));
+        // Safari has no CLI private flag — must not pass a bogus one.
+        assert_eq!(private_window_flag("safari"), None);
+    }
 }
 
 #[cfg(target_os = "windows")]
