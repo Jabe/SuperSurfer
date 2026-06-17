@@ -166,12 +166,20 @@ fn apply_rewrite<'js>(
         let matcher: Value = rule.get("match")?;
         if eval_match(ctx, matcher, &url.borrow(), context)? {
             let transform: Function = rule.get("url")?;
-            let url_obj = make_url_object(ctx, &url.borrow())?;
-            match transform.call::<_, Value>((url_obj,)) {
+            let original = url.borrow().clone();
+            let url_obj = make_mutable_url_object(ctx, &original)?;
+            match transform.call::<_, Value>((url_obj.clone(),)) {
                 Ok(result) => {
                     if let Some(next) = result.as_string() {
+                        // Returned a replacement URL string (Finicky style).
                         if let Ok(parsed) = Url::parse(&next.to_string()?) {
                             *url.borrow_mut() = parsed;
+                        }
+                    } else {
+                        // Mutated the URL object in place (e.g. searchParams.delete).
+                        match read_back_url(&original, &url_obj) {
+                            Ok(parsed) => *url.borrow_mut() = parsed,
+                            Err(err) => eprintln!("rewrite rule produced invalid URL: {err}"),
                         }
                     }
                 }
@@ -345,12 +353,102 @@ fn make_url_object<'js>(ctx: &rquickjs::Ctx<'js>, url: &Url) -> Result<Object<'j
         "search",
         url.query().map(|q| format!("?{q}")).unwrap_or_default(),
     )?;
-    let search_params = Object::new(ctx.clone())?;
-    for (key, value) in url.query_pairs() {
-        search_params.set(key.as_ref(), value.as_ref())?;
-    }
-    obj.set("searchParams", search_params)?;
+    obj.set("searchParams", make_search_params(ctx, url)?)?;
     Ok(obj)
+}
+
+/// Build a `URLSearchParams` instance (from helpers.js) so config code can call
+/// `.get()`, `.has()`, `.getAll()` on it, matching the documented `URL` API.
+fn make_search_params<'js>(ctx: &rquickjs::Ctx<'js>, url: &Url) -> Result<Object<'js>> {
+    let pairs = query_pairs_array(ctx, url)?;
+    let factory: Function = ctx.globals().get("__makeSearchParams")?;
+    Ok(factory.call((pairs,))?)
+}
+
+fn query_pairs_array<'js>(ctx: &rquickjs::Ctx<'js>, url: &Url) -> Result<Array<'js>> {
+    let pairs = Array::new(ctx.clone())?;
+    for (i, (key, value)) in url.query_pairs().enumerate() {
+        let pair = Array::new(ctx.clone())?;
+        pair.set(0, key.as_ref())?;
+        pair.set(1, value.as_ref())?;
+        pairs.set(i, pair)?;
+    }
+    Ok(pairs)
+}
+
+/// Build a mutable URL object for `rewrite` rules: `searchParams` supports
+/// `delete/set/append`, and direct writes to `pathname`, `hostname`, etc. are
+/// read back afterwards by [`read_back_url`].
+fn make_mutable_url_object<'js>(ctx: &rquickjs::Ctx<'js>, url: &Url) -> Result<Object<'js>> {
+    let parts = Object::new(ctx.clone())?;
+    parts.set("protocol", format!("{}:", url.scheme()))?;
+    parts.set("username", url.username())?;
+    parts.set("password", url.password().unwrap_or(""))?;
+    parts.set("hostname", url.host_str().unwrap_or(""))?;
+    parts.set(
+        "port",
+        url.port().map(|p| p.to_string()).unwrap_or_default(),
+    )?;
+    parts.set("pathname", url.path())?;
+    parts.set(
+        "hash",
+        url.fragment().map(|f| format!("#{f}")).unwrap_or_default(),
+    )?;
+    parts.set("pairs", query_pairs_array(ctx, url)?)?;
+    let factory: Function = ctx.globals().get("__makeMutableUrl")?;
+    Ok(factory.call((parts,))?)
+}
+
+/// Apply the (possibly mutated) JS URL object back onto a Rust [`Url`], starting
+/// from `original` so untouched components (userinfo, etc.) are preserved.
+fn read_back_url(original: &Url, obj: &Object<'_>) -> Result<Url> {
+    let mut url = original.clone();
+
+    let protocol: String = obj.get("protocol").unwrap_or_default();
+    let scheme = protocol.trim_end_matches(':');
+    if !scheme.is_empty() && scheme != url.scheme() {
+        let _ = url.set_scheme(scheme);
+    }
+
+    let hostname: String = obj.get("hostname").unwrap_or_default();
+    if !hostname.is_empty() && Some(hostname.as_str()) != url.host_str() {
+        let _ = url.set_host(Some(&hostname));
+    }
+
+    let port: String = obj.get("port").unwrap_or_default();
+    if port.is_empty() {
+        let _ = url.set_port(None);
+    } else if let Ok(p) = port.parse::<u16>() {
+        let _ = url.set_port(Some(p));
+    }
+
+    let pathname: String = obj.get("pathname").unwrap_or_default();
+    url.set_path(&pathname);
+
+    let hash: String = obj.get("hash").unwrap_or_default();
+    let fragment = hash.strip_prefix('#').unwrap_or(&hash);
+    url.set_fragment((!fragment.is_empty()).then_some(fragment));
+
+    let username: String = obj.get("username").unwrap_or_default();
+    let _ = url.set_username(&username);
+    let password: String = obj.get("password").unwrap_or_default();
+    let _ = url.set_password((!password.is_empty()).then_some(password.as_str()));
+
+    let search_params: Object = obj.get("searchParams")?;
+    let pairs: Array = search_params.get("_pairs")?;
+    url.set_query(None);
+    let len = pairs.len();
+    if len > 0 {
+        let mut qp = url.query_pairs_mut();
+        for i in 0..len {
+            let pair: Array = pairs.get(i)?;
+            let key: String = pair.get(0)?;
+            let value: String = pair.get(1)?;
+            qp.append_pair(&key, &value);
+        }
+    }
+
+    Ok(url)
 }
 
 fn make_context_object<'js>(
@@ -498,6 +596,91 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
         let (target, out) = rt.route(&url, &ctx).unwrap();
         assert!(target.is_none());
         assert_eq!(out.as_str(), "https://example.com/path");
+    }
+
+    fn rewrite_url(rule_url_body: &str, input: &str) -> String {
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "chrome",
+  handlers: [],
+  rewrite: [{{ match: () => true, url: (u) => {{ {rule_url_body} }} }}],
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        let url = Url::parse(input).unwrap();
+        let ctx = RouteContext::default();
+        let (_, out) = rt.route(&url, &ctx).unwrap();
+        out.to_string()
+    }
+
+    #[test]
+    fn rewrite_searchparams_delete_in_place() {
+        assert_eq!(
+            rewrite_url(r#"u.searchParams.delete("ref");"#, "https://example.com/p?ref=1&ok=2"),
+            "https://example.com/p?ok=2"
+        );
+    }
+
+    #[test]
+    fn rewrite_searchparams_set_and_append() {
+        assert_eq!(
+            rewrite_url(
+                r#"u.searchParams.set("a", "3"); u.searchParams.append("b", "4");"#,
+                "https://example.com/?a=1&a=2"
+            ),
+            "https://example.com/?a=3&b=4"
+        );
+    }
+
+    #[test]
+    fn rewrite_searchparams_get_returns_value() {
+        // delete only when the param has a specific value, exercising get().
+        assert_eq!(
+            rewrite_url(
+                r#"if (u.searchParams.get("track") === "yes") u.searchParams.delete("track");"#,
+                "https://example.com/?track=yes&keep=1"
+            ),
+            "https://example.com/?keep=1"
+        );
+    }
+
+    #[test]
+    fn rewrite_can_mutate_pathname() {
+        assert_eq!(
+            rewrite_url(r#"u.pathname = "/new";"#, "https://example.com/old?x=1"),
+            "https://example.com/new?x=1"
+        );
+    }
+
+    #[test]
+    fn rewrite_string_return_still_supported() {
+        assert_eq!(
+            rewrite_url(r#"return "https://elsewhere.test/";"#, "https://example.com/"),
+            "https://elsewhere.test/"
+        );
+    }
+
+    #[test]
+    fn matcher_can_read_searchparams_get() {
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "chrome",
+  handlers: [
+    {{ match: (u) => u.searchParams.get("forta") === "firefox", browser: "firefox" }},
+  ],
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        let url = Url::parse("https://example.com/?forta=firefox").unwrap();
+        let ctx = RouteContext::default();
+        let (target, _) = rt.route(&url, &ctx).unwrap();
+        assert_eq!(target.unwrap().name.as_deref(), Some("firefox"));
     }
 
     #[test]
