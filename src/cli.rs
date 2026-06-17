@@ -49,15 +49,15 @@ pub enum Commands {
 
 pub fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let hot_path = args.len() == 1 && crate::input_url::is_routable_input(&args[0]);
+    let hot_path = parse_hot_path(&args);
     let fresh_bootstrap = crate::bootstrap::ensure_ready()?;
     #[cfg(target_os = "windows")]
-    if !hot_path {
+    if hot_path.is_none() {
         platform::attach_parent_console();
     }
 
-    if hot_path {
-        return platform::handle_url_arg(&args[0]);
+    if let Some((url, opener)) = hot_path {
+        return platform::handle_url_arg(&url, opener);
     }
 
     if args.is_empty() {
@@ -73,6 +73,48 @@ pub fn run() -> Result<()> {
         Commands::UpdateRules => cmd_update_rules(),
         Commands::Logs { lines } => logging::tail_logs(lines),
     }
+}
+
+/// Detect a default-browser "open this URL" invocation: exactly one routable
+/// input, optionally preceded by `--opener-{name,bundle,path}` flags that the
+/// platform launcher supplies to identify the originating application. Returns
+/// `None` for anything else so it falls through to clap subcommand parsing.
+fn parse_hot_path(args: &[String]) -> Option<(String, Option<Opener>)> {
+    let mut url: Option<String> = None;
+    let mut name: Option<String> = None;
+    let mut bundle_id: Option<String> = None;
+    let mut path: Option<String> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--opener-name" => {
+                name = args.get(i + 1).cloned();
+                i += 2;
+            }
+            "--opener-bundle" => {
+                bundle_id = args.get(i + 1).cloned();
+                i += 2;
+            }
+            "--opener-path" => {
+                path = args.get(i + 1).cloned();
+                i += 2;
+            }
+            candidate if url.is_none() && crate::input_url::is_routable_input(candidate) => {
+                url = Some(candidate.to_string());
+                i += 1;
+            }
+            _ => return None,
+        }
+    }
+
+    let url = url?;
+    let opener = name.map(|name| Opener {
+        name,
+        bundle_id,
+        path,
+    });
+    Some((url, opener))
 }
 
 fn cmd_init(register: bool, force: bool) -> Result<()> {
@@ -176,4 +218,48 @@ fn cmd_update_rules() -> Result<()> {
     println!("`supersurfer update-rules` is not implemented yet.");
     println!("Built-in URL cleaning rules ship with the binary and update on release.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn bare_url_is_hot_path_without_opener() {
+        let (url, opener) = parse_hot_path(&s(&["https://example.com"])).unwrap();
+        assert_eq!(url, "https://example.com");
+        assert!(opener.is_none());
+    }
+
+    #[test]
+    fn opener_flags_are_parsed_before_url() {
+        let (url, opener) = parse_hot_path(&s(&[
+            "--opener-name",
+            "Slack",
+            "--opener-bundle",
+            "com.tinyspeck.slackmacgap",
+            "https://example.com",
+        ]))
+        .unwrap();
+        assert_eq!(url, "https://example.com");
+        let opener = opener.unwrap();
+        assert_eq!(opener.name, "Slack");
+        assert_eq!(opener.bundle_id.as_deref(), Some("com.tinyspeck.slackmacgap"));
+    }
+
+    #[test]
+    fn subcommands_are_not_hot_path() {
+        assert!(parse_hot_path(&s(&["doctor"])).is_none());
+        assert!(parse_hot_path(&s(&["test", "https://example.com"])).is_none());
+        assert!(parse_hot_path(&s(&["init", "--register"])).is_none());
+    }
+
+    #[test]
+    fn empty_args_are_not_hot_path() {
+        assert!(parse_hot_path(&[]).is_none());
+    }
 }

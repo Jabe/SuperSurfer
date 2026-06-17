@@ -136,10 +136,14 @@ pub fn open_url_in_default_browser(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn handle_url_arg(url: &str) -> anyhow::Result<()> {
+pub fn handle_url_arg(url: &str, opener: Option<Opener>) -> anyhow::Result<()> {
     let router = Router::new()?;
     let mut context = crate::context::Context::default();
-    if router.references_opener() {
+    if opener.is_some() {
+        // The launcher already identified the originating app (e.g. on macOS, where
+        // parent-process detection would only ever see SuperSurfer itself).
+        context.opener = opener;
+    } else if router.references_opener() {
         context.opener = detect_opener();
     }
     let decision = router.route_and_launch(url, &context, false)?;

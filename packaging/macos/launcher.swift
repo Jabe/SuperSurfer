@@ -17,11 +17,35 @@ func isRoutableInput(_ value: String) -> Bool {
     return false
 }
 
+// Identify the app the user clicked the link in. SuperSurfer runs as an
+// `.accessory` and never activates itself, so the frontmost application at the
+// moment the open event arrives is the originating app (e.g. Slack, Mail).
+// This is passed to the router so `ctx.opener` works — parent-process detection
+// alone would only ever report SuperSurfer/launchd.
+func openerArgs() -> [String] {
+    guard let app = NSWorkspace.shared.frontmostApplication else { return [] }
+    if let bundleID = app.bundleIdentifier, bundleID == Bundle.main.bundleIdentifier {
+        return []
+    }
+    var args: [String] = []
+    if let name = app.localizedName {
+        args += ["--opener-name", name]
+    }
+    if let bundleID = app.bundleIdentifier {
+        args += ["--opener-bundle", bundleID]
+    }
+    if let path = app.bundleURL?.path {
+        args += ["--opener-path", path]
+    }
+    return args
+}
+
 func runRouter(with urls: [String]) {
+    let opener = openerArgs()
     for url in urls {
         let process = Process()
         process.executableURL = routerBinary()
-        process.arguments = [url]
+        process.arguments = opener + [url]
         process.standardOutput = FileHandle.standardOutput
         process.standardError = FileHandle.standardError
         try? process.run()
