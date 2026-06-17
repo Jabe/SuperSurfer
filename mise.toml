@@ -14,9 +14,21 @@ description = "Run unit tests"
 run = "cargo test"
 
 [tasks.check]
-description = "Format, lint, and test"
+description = "Format, lint, and test (verify-only; matches CI exactly)"
 run = [
   "cargo fmt --all -- --check",
+  "cargo clippy --all-targets -- -D warnings",
+  "cargo test",
+]
+
+[tasks.fmt]
+description = "Auto-format all code"
+run = "cargo fmt --all"
+
+[tasks.prepush]
+description = "Auto-format, then run the CI gates — run before every push"
+run = [
+  "cargo fmt --all",
   "cargo clippy --all-targets -- -D warnings",
   "cargo test",
 ]
