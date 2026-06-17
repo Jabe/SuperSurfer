@@ -129,6 +129,9 @@ fn unwrap_sophos(url: &mut Url) -> bool {
         format!("http://{dest}"),
     ] {
         if let Ok(parsed) = Url::parse(&candidate) {
+            if !is_web_scheme(&parsed) {
+                continue;
+            }
             *url = parsed;
             return true;
         }
@@ -149,12 +152,20 @@ fn unwrap_query_param(url: &mut Url, param: &str) -> bool {
     let Some(dest) = query_param_value(url, param) else {
         return false;
     };
-    if let Ok(parsed) = Url::parse(&dest) {
-        *url = parsed;
-        true
-    } else {
-        false
+    match Url::parse(&dest) {
+        Ok(parsed) if is_web_scheme(&parsed) => {
+            *url = parsed;
+            true
+        }
+        _ => false,
     }
+}
+
+/// Only unwrap to web destinations. Wrapper hosts are attacker-controllable via
+/// email/chat, so we must never rewrite a "safe" link into a `file:`, `javascript:`,
+/// or other local/dangerous scheme that the browser would then open.
+fn is_web_scheme(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https")
 }
 
 fn query_param_value(url: &Url, param: &str) -> Option<String> {
@@ -164,19 +175,34 @@ fn query_param_value(url: &Url, param: &str) -> Option<String> {
 }
 
 fn strip_tracking_params(url: &mut Url) {
+    let Some(query) = url.query() else {
+        return;
+    };
     let utm = UTM_RE.get_or_init(|| Regex::new(r"^utm_").unwrap());
-    let pairs: Vec<(String, String)> = url
-        .query_pairs()
-        .filter(|(k, _)| !TRACKING_PARAMS.contains(&k.as_ref()) && !utm.is_match(k.as_ref()))
-        .map(|(k, v)| (k.into_owned(), v.into_owned()))
-        .collect();
 
-    url.set_query(None);
-    if !pairs.is_empty() {
-        let mut qp = url.query_pairs_mut();
-        for (k, v) in pairs {
-            qp.append_pair(&k, &v);
+    // Operate on the raw `&`-separated segments so the encoding of kept params is
+    // preserved byte-for-byte. Tracking parameter names are plain ASCII, so the raw
+    // key (before `=`) is sufficient to identify them. Rebuilding the query via
+    // form-encoding would corrupt signature-sensitive URLs (pre-signed S3, OAuth,
+    // HMAC params): `?q=a%20b` -> `?q=a+b`, `?flag` -> `?flag=`.
+    let mut kept: Vec<&str> = Vec::new();
+    let mut removed = false;
+    for segment in query.split('&') {
+        let key = segment.split('=').next().unwrap_or(segment);
+        if TRACKING_PARAMS.contains(&key) || utm.is_match(key) {
+            removed = true;
+        } else {
+            kept.push(segment);
         }
+    }
+
+    if !removed {
+        return;
+    }
+    if kept.is_empty() {
+        url.set_query(None);
+    } else {
+        url.set_query(Some(&kept.join("&")));
     }
 }
 
@@ -283,6 +309,37 @@ mod tests {
             unwrap("https://eu01.safelinks.protection.sophos.com/?d=example.com%2Fpage"),
             "https://example.com/page"
         );
+    }
+
+    #[test]
+    fn refuses_to_unwrap_to_file_scheme() {
+        // A weaponized "safe" link must not be rewritten into a local file:// URL.
+        let wrapped =
+            "https://safelinks.protection.outlook.com/?url=file%3A%2F%2F%2Fetc%2Fpasswd";
+        assert_eq!(unwrap(wrapped), wrapped);
+    }
+
+    #[test]
+    fn refuses_to_unwrap_sophos_to_file_scheme() {
+        // Whatever Sophos produces, it must never be a local file:// URL.
+        let wrapped = "https://eu01.safelinks.protection.sophos.com/?d=file%3A%2F%2F%2Fetc%2Fpasswd";
+        let out = Url::parse(&unwrap(wrapped)).unwrap();
+        assert_ne!(out.scheme(), "file");
+    }
+
+    #[test]
+    fn preserves_query_encoding_when_nothing_stripped() {
+        let mut url = Url::parse("https://example.com/page?q=a%20b&flag&sig=AbC%2Fd").unwrap();
+        strip_tracking_params(&mut url);
+        assert_eq!(url.as_str(), "https://example.com/page?q=a%20b&flag&sig=AbC%2Fd");
+    }
+
+    #[test]
+    fn preserves_kept_param_encoding_when_stripping() {
+        let mut url =
+            Url::parse("https://example.com/page?utm_source=x&sig=AbC%2Fd&q=a%20b").unwrap();
+        strip_tracking_params(&mut url);
+        assert_eq!(url.as_str(), "https://example.com/page?sig=AbC%2Fd&q=a%20b");
     }
 
     #[test]
