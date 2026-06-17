@@ -314,15 +314,15 @@ mod tests {
     #[test]
     fn refuses_to_unwrap_to_file_scheme() {
         // A weaponized "safe" link must not be rewritten into a local file:// URL.
-        let wrapped =
-            "https://safelinks.protection.outlook.com/?url=file%3A%2F%2F%2Fetc%2Fpasswd";
+        let wrapped = "https://safelinks.protection.outlook.com/?url=file%3A%2F%2F%2Fetc%2Fpasswd";
         assert_eq!(unwrap(wrapped), wrapped);
     }
 
     #[test]
     fn refuses_to_unwrap_sophos_to_file_scheme() {
         // Whatever Sophos produces, it must never be a local file:// URL.
-        let wrapped = "https://eu01.safelinks.protection.sophos.com/?d=file%3A%2F%2F%2Fetc%2Fpasswd";
+        let wrapped =
+            "https://eu01.safelinks.protection.sophos.com/?d=file%3A%2F%2F%2Fetc%2Fpasswd";
         let out = Url::parse(&unwrap(wrapped)).unwrap();
         assert_ne!(out.scheme(), "file");
     }
@@ -331,7 +331,10 @@ mod tests {
     fn preserves_query_encoding_when_nothing_stripped() {
         let mut url = Url::parse("https://example.com/page?q=a%20b&flag&sig=AbC%2Fd").unwrap();
         strip_tracking_params(&mut url);
-        assert_eq!(url.as_str(), "https://example.com/page?q=a%20b&flag&sig=AbC%2Fd");
+        assert_eq!(
+            url.as_str(),
+            "https://example.com/page?q=a%20b&flag&sig=AbC%2Fd"
+        );
     }
 
     #[test]

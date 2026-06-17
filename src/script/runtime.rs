@@ -619,7 +619,10 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
     #[test]
     fn rewrite_searchparams_delete_in_place() {
         assert_eq!(
-            rewrite_url(r#"u.searchParams.delete("ref");"#, "https://example.com/p?ref=1&ok=2"),
+            rewrite_url(
+                r#"u.searchParams.delete("ref");"#,
+                "https://example.com/p?ref=1&ok=2"
+            ),
             "https://example.com/p?ok=2"
         );
     }
@@ -658,7 +661,10 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
     #[test]
     fn rewrite_string_return_still_supported() {
         assert_eq!(
-            rewrite_url(r#"return "https://elsewhere.test/";"#, "https://example.com/"),
+            rewrite_url(
+                r#"return "https://elsewhere.test/";"#,
+                "https://example.com/"
+            ),
             "https://elsewhere.test/"
         );
     }

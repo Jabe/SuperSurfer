@@ -248,7 +248,10 @@ mod tests {
         assert_eq!(url, "https://example.com");
         let opener = opener.unwrap();
         assert_eq!(opener.name, "Slack");
-        assert_eq!(opener.bundle_id.as_deref(), Some("com.tinyspeck.slackmacgap"));
+        assert_eq!(
+            opener.bundle_id.as_deref(),
+            Some("com.tinyspeck.slackmacgap")
+        );
     }
 
     #[test]

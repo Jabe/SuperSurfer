@@ -194,7 +194,10 @@ fn private_window_flag(browser_id: &str) -> Option<&'static str> {
     }
 }
 
-#[cfg(all(test, any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+#[cfg(all(
+    test,
+    any(target_os = "macos", target_os = "windows", target_os = "linux")
+))]
 mod tests {
     use super::private_window_flag;
 
