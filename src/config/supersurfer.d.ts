@@ -53,7 +53,7 @@ export interface RouterConfig {
   defaultBrowser: string;
   handlers: HandlerRule[];
   rewrite?: RewriteRule[];
-  urlCleaning?: "off" | "default" | unknown[];
+  urlCleaning?: "off" | "default";
 }
 
 export function host(hostname: string): Matcher;

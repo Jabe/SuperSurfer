@@ -114,8 +114,22 @@ impl ScriptRuntime {
     pub fn url_cleaning_mode(&self) -> Result<String> {
         self.ctx.with(|ctx| {
             let config: Object = ctx.globals().get("__SUPERSURFER_CONFIG__")?;
+            // urlCleaning may be a string ("off" | "default") or, per the type
+            // declaration, a custom-rules array. Custom rules are not yet
+            // implemented; fall back to "default" and warn so the user isn't
+            // silently misled into thinking their rules are applied.
             let mode: Option<String> = config.get("urlCleaning").ok();
-            Ok(mode.unwrap_or_else(|| "default".to_string()))
+            let mode = mode.unwrap_or_else(|| "default".to_string());
+            match mode.as_str() {
+                "off" | "default" => Ok(mode),
+                other => {
+                    eprintln!(
+                        "urlCleaning: unsupported value {other:?} (expected \"off\" or \"default\"). \
+                         Custom rule arrays are not yet implemented; falling back to \"default\"."
+                    );
+                    Ok("default".to_string())
+                }
+            }
         })
     }
 
@@ -555,8 +569,12 @@ mod sandbox_tests {
                 Ok(())
             })
             .unwrap();
+        // Re-resolve the log dir (it is created by append_script_log) and read
+        // defensively: parallel bootstrap tests temporarily repoint HOME and
+        // delete their temp tree, which can race with this read.
         let path = crate::logging::script_log_file().unwrap();
-        let content = std::fs::read_to_string(path).unwrap();
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|_| String::new());
         assert!(content.contains("hello"));
         assert!(content.contains("42"));
     }
@@ -754,5 +772,51 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
             started.elapsed() < Duration::from_secs(2),
             "interrupt handler should stop runaway matchers quickly"
         );
+    }
+
+    fn runtime_with_url_cleaning(value: &str) -> ScriptRuntime {
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "chrome",
+  handlers: [],
+  urlCleaning: {value},
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        ScriptRuntime::from_js(&js).unwrap()
+    }
+
+    #[test]
+    fn url_cleaning_defaults_to_default_when_absent() {
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{ defaultBrowser: "chrome", handlers: [] }};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        assert_eq!(rt.url_cleaning_mode().unwrap(), "default");
+    }
+
+    #[test]
+    fn url_cleaning_off_is_respected() {
+        let rt = runtime_with_url_cleaning("\"off\"");
+        assert_eq!(rt.url_cleaning_mode().unwrap(), "off");
+    }
+
+    #[test]
+    fn url_cleaning_default_is_respected() {
+        let rt = runtime_with_url_cleaning("\"default\"");
+        assert_eq!(rt.url_cleaning_mode().unwrap(), "default");
+    }
+
+    #[test]
+    fn url_cleaning_unsupported_value_falls_back_to_default() {
+        // Custom rule arrays are typed but not yet implemented; the runtime
+        // must not silently honor an unsupported value, and must not panic.
+        let rt = runtime_with_url_cleaning("\"aggressive\"");
+        assert_eq!(rt.url_cleaning_mode().unwrap(), "default");
     }
 }
