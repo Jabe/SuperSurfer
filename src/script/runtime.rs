@@ -118,18 +118,31 @@ impl ScriptRuntime {
             // declaration, a custom-rules array. Custom rules are not yet
             // implemented; fall back to "default" and warn so the user isn't
             // silently misled into thinking their rules are applied.
-            let mode: Option<String> = config.get("urlCleaning").ok();
-            let mode = mode.unwrap_or_else(|| "default".to_string());
-            match mode.as_str() {
-                "off" | "default" => Ok(mode),
-                other => {
-                    eprintln!(
-                        "urlCleaning: unsupported value {other:?} (expected \"off\" or \"default\"). \
-                         Custom rule arrays are not yet implemented; falling back to \"default\"."
-                    );
-                    Ok("default".to_string())
-                }
+            //
+            // Inspect the raw value rather than coercing to String: a String
+            // FromJs of a non-string (e.g. an array) yields None, which is
+            // indistinguishable from the key being absent and would skip the
+            // warning for exactly the array case we want to catch.
+            let value: Value = config.get("urlCleaning")?;
+            if value.is_undefined() || value.is_null() {
+                return Ok("default".to_string());
             }
+            if let Some(s) = value.as_string() {
+                let mode = s.to_string()?;
+                if mode == "off" || mode == "default" {
+                    return Ok(mode);
+                }
+                eprintln!(
+                    "urlCleaning: unsupported value {mode:?} (expected \"off\" or \"default\"). \
+                     Custom rule arrays are not yet implemented; falling back to \"default\"."
+                );
+                return Ok("default".to_string());
+            }
+            eprintln!(
+                "urlCleaning: unsupported value (expected the string \"off\" or \"default\"). \
+                 Custom rule arrays are not yet implemented; falling back to \"default\"."
+            );
+            Ok("default".to_string())
         })
     }
 
@@ -816,6 +829,15 @@ globalThis.__SUPERSURFER_CONFIG__ = {{ defaultBrowser: "chrome", handlers: [] }}
         // Custom rule arrays are typed but not yet implemented; the runtime
         // must not silently honor an unsupported value, and must not panic.
         let rt = runtime_with_url_cleaning("\"aggressive\"");
+        assert_eq!(rt.url_cleaning_mode().unwrap(), "default");
+    }
+
+    #[test]
+    fn url_cleaning_custom_rule_array_falls_back_to_default() {
+        // The motivating case: a custom-rule array is typed but unimplemented.
+        // A non-string value must not slip through as a silent "default" via a
+        // failed String coercion -- it must be detected and fall back.
+        let rt = runtime_with_url_cleaning("[{ host: \"example.com\" }]");
         assert_eq!(rt.url_cleaning_mode().unwrap(), "default");
     }
 }
