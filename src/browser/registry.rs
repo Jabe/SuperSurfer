@@ -821,14 +821,14 @@ fn discover_profiles_linux(spec: &KnownBrowser) -> Result<Vec<BrowserProfile>> {
 fn discover_windows_cached(fresh: bool) -> Result<BrowserRegistry> {
     use crate::browser::cache;
 
+    let start_menu = discover_windows::enumerate_start_menu_browsers()?;
+    let fingerprint = cache::registry_fingerprint(&start_menu);
+
     if !fresh {
-        if let Some(browsers) = cache::load()? {
+        if let Some(browsers) = cache::load(&fingerprint)? {
             return Ok(BrowserRegistry { browsers });
         }
     }
-
-    let start_menu = discover_windows::enumerate_start_menu_browsers()?;
-    let fingerprint = cache::registry_fingerprint(&start_menu);
 
     let load_profiles = fresh;
     let mut browsers = HashMap::new();

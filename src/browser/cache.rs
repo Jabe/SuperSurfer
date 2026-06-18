@@ -24,13 +24,19 @@ pub fn registry_fingerprint(entries: &[(String, String, String)]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-pub fn load() -> Result<Option<HashMap<String, BrowserInstall>>> {
+/// Load a cached registry only if its fingerprint still matches the current
+/// start-menu snapshot. A mismatch (browser installed/uninstalled, command
+/// path changed) invalidates the cache so discovery runs again.
+pub fn load(expected_fingerprint: &str) -> Result<Option<HashMap<String, BrowserInstall>>> {
     let path = cache_path()?;
     if !path.exists() {
         return Ok(None);
     }
     let content = fs::read_to_string(&path)?;
     let cached: CachedRegistry = serde_json::from_str(&content)?;
+    if cached.fingerprint != expected_fingerprint {
+        return Ok(None);
+    }
     Ok(Some(cached.browsers))
 }
 
