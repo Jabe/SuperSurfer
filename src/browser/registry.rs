@@ -640,14 +640,60 @@ fn browser(
 
 #[cfg(target_os = "macos")]
 fn discover_inner(fresh: bool) -> Result<BrowserRegistry> {
-    let _ = fresh;
-    let mut browsers = HashMap::new();
+    use crate::browser::cache;
+
+    // Cheap pass: resolve each known browser's .app bundle path (a couple of
+    // stats per browser) and the mtime of its Info.plist. This snapshot is the
+    // cache key and invalidates on install/update/reinstall.
+    let mut snapshot: Vec<(String, std::time::SystemTime)> = Vec::new();
+    let mut resolved: Vec<(KnownBrowser, PathBuf)> = Vec::new();
     for spec in known_browsers() {
-        if let Some(install) = discover_browser_macos(&spec)? {
+        if let Some(path) = resolve_app_path_macos(&spec) {
+            let plist = path.join("Contents/Info.plist");
+            let mtime = fs::metadata(&plist)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            snapshot.push((path.to_string_lossy().to_string(), mtime));
+            resolved.push((spec, path));
+        }
+    }
+    let fingerprint = cache::macos_fingerprint(&snapshot);
+
+    if !fresh {
+        if let Some(browsers) = cache::load(&fingerprint)? {
+            return Ok(BrowserRegistry { browsers });
+        }
+    }
+
+    // Cache miss: do the expensive work (plist parse + profile discovery) for
+    // each resolved bundle, then persist.
+    let mut browsers = HashMap::new();
+    for (spec, app_path) in &resolved {
+        if let Some(install) = discover_browser_macos(spec, app_path)? {
             browsers.insert(spec.id.to_string(), install);
         }
     }
+
+    cache::save(&fingerprint, &browsers)?;
+
     Ok(BrowserRegistry { browsers })
+}
+
+/// Resolve a known browser's `.app` bundle path by checking the system and
+/// user Applications directories. Returns the first existing match.
+#[cfg(target_os = "macos")]
+fn resolve_app_path_macos(spec: &KnownBrowser) -> Option<PathBuf> {
+    spec.mac_app_names
+        .iter()
+        .map(|name| PathBuf::from("/Applications").join(name))
+        .chain(spec.mac_app_names.iter().map(|name| {
+            directories::UserDirs::new()
+                .map(|u| u.home_dir().to_path_buf())
+                .unwrap_or_default()
+                .join("Applications")
+                .join(name)
+        }))
+        .find(|p| p.exists())
 }
 
 #[cfg(target_os = "windows")]
@@ -844,27 +890,10 @@ fn discover_windows_cached(fresh: bool) -> Result<BrowserRegistry> {
 }
 
 #[cfg(target_os = "macos")]
-fn discover_browser_macos(spec: &KnownBrowser) -> Result<Option<BrowserInstall>> {
-    let app_path = spec
-        .mac_app_names
-        .iter()
-        .map(|name| PathBuf::from("/Applications").join(name))
-        .chain(spec.mac_app_names.iter().map(|name| {
-            directories::UserDirs::new()
-                .map(|u| u.home_dir().to_path_buf())
-                .unwrap_or_default()
-                .join("Applications")
-                .join(name)
-        }))
-        .find(|p| p.exists());
-
-    let Some(app_path) = app_path else {
-        return Ok(None);
-    };
-
+fn discover_browser_macos(spec: &KnownBrowser, app_path: &Path) -> Result<Option<BrowserInstall>> {
     let bundle_id =
-        read_bundle_id(&app_path).or_else(|| spec.mac_bundle_ids.first().map(|s| s.to_string()));
-    let profiles = discover_profiles(spec, &app_path)?;
+        read_bundle_id(app_path).or_else(|| spec.mac_bundle_ids.first().map(|s| s.to_string()));
+    let profiles = discover_profiles(spec, app_path)?;
 
     Ok(Some(BrowserInstall {
         id: spec.id.to_string(),

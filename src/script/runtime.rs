@@ -573,8 +573,7 @@ mod sandbox_tests {
         // defensively: parallel bootstrap tests temporarily repoint HOME and
         // delete their temp tree, which can race with this read.
         let path = crate::logging::script_log_file().unwrap();
-        let content = std::fs::read_to_string(&path)
-            .unwrap_or_else(|_| String::new());
+        let content = std::fs::read_to_string(&path).unwrap_or_else(|_| String::new());
         assert!(content.contains("hello"));
         assert!(content.contains("42"));
     }
