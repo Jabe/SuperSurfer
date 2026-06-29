@@ -69,8 +69,6 @@ pub struct ScriptRuntime {
 pub struct BrowserTarget {
     pub name: Option<String>,
     pub private: bool,
-    pub app: Option<String>,
-    pub exe: Option<String>,
 }
 
 impl ScriptRuntime {
@@ -250,8 +248,6 @@ fn parse_browser_target(value: Value<'_>) -> Result<BrowserTarget> {
         return Ok(BrowserTarget {
             name: Some(map_browser_name(&name.to_string()?)?),
             private: false,
-            app: None,
-            exe: None,
         });
     }
 
@@ -264,15 +260,11 @@ fn parse_browser_target(value: Value<'_>) -> Result<BrowserTarget> {
         return Ok(BrowserTarget {
             name: Some(browser_spec_from_parts(&display_name, profile)?),
             private: false,
-            app: None,
-            exe: None,
         });
     }
 
     let browser: Option<String> = obj.get("browser").ok();
     let private: bool = obj.get("private").unwrap_or(false);
-    let app: Option<String> = obj.get("app").ok();
-    let exe: Option<String> = obj.get("exe").ok();
     let name = browser
         .map(|browser| {
             let profile: Option<String> = obj.get("profile").ok();
@@ -280,12 +272,7 @@ fn parse_browser_target(value: Value<'_>) -> Result<BrowserTarget> {
         })
         .transpose()?;
 
-    Ok(BrowserTarget {
-        name,
-        private,
-        app,
-        exe,
-    })
+    Ok(BrowserTarget { name, private })
 }
 
 fn browser_spec_from_parts(browser: &str, profile: Option<String>) -> Result<String> {
@@ -297,9 +284,6 @@ fn browser_spec_from_parts(browser: &str, profile: Option<String>) -> Result<Str
 }
 
 fn map_browser_name(display_name: &str) -> Result<String> {
-    if display_name.to_lowercase().ends_with(".app") {
-        return Ok(display_name.to_string());
-    }
     Ok(crate::browser::registry::normalize_browser_id(display_name).to_string())
 }
 

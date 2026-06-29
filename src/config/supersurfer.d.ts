@@ -36,12 +36,6 @@ export type BrowserTarget =
   | {
       name: string;
       profile?: string;
-    }
-  | {
-      app: string;
-    }
-  | {
-      exe: string;
     };
 
 export interface HandlerRule {

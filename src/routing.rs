@@ -69,15 +69,12 @@ impl Router {
             }
         };
 
-        let target = if let Some(target) = target {
-            target
-        } else {
-            BrowserTarget {
+        let target = match target {
+            Some(t) if t.name.is_some() => t,
+            _ => BrowserTarget {
                 name: Some(self.config.runtime.default_browser()?),
                 private: false,
-                app: None,
-                exe: None,
-            }
+            },
         };
 
         let (
@@ -141,35 +138,6 @@ impl Router {
     }
 
     fn resolve_target(&self, target: BrowserTarget) -> Result<ResolvedTarget> {
-        if let Some(app) = target.app {
-            let name = target.name.unwrap_or_else(|| "custom-app".to_string());
-            return Ok((
-                name.clone(),
-                name,
-                None,
-                None,
-                target.private,
-                Some(app),
-                true,
-                false,
-            ));
-        }
-
-        #[cfg(target_os = "windows")]
-        if let Some(exe) = target.exe {
-            let name = target.name.unwrap_or_else(|| "custom-exe".to_string());
-            return Ok((
-                name.clone(),
-                name,
-                None,
-                None,
-                target.private,
-                Some(exe),
-                true,
-                false,
-            ));
-        }
-
         let spec = target
             .name
             .context("browser target did not specify a browser name")?;
