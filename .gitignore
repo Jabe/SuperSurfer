@@ -1,5 +1,4 @@
 /target
-/Cargo.lock
 /types/
 /dist/
 browser-router-spec.md
