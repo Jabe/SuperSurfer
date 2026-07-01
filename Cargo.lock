@@ -740,6 +740,7 @@ dependencies = [
  "clap",
  "directories",
  "globset",
+ "libc",
  "plist",
  "regex",
  "rquickjs",

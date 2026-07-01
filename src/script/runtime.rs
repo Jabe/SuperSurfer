@@ -145,6 +145,7 @@ impl ScriptRuntime {
     }
 
     pub fn route(&self, url: &Url, context: &RouteContext) -> Result<(Option<BrowserTarget>, Url)> {
+        let _process_guard = crate::process::RouteProcessGuard::new();
         reset_budget(&self.budget);
         let working = RefCell::new(url.clone());
         let target = self.route_inner(&working, context)?;
@@ -310,6 +311,12 @@ fn install_host_functions(globals: &Object<'_>) -> Result<()> {
         "__consoleLog",
         Function::new(globals.ctx().clone(), |message: String| {
             crate::logging::append_script_log(&message).ok();
+        })?,
+    )?;
+    globals.set(
+        "__processRunning",
+        Function::new(globals.ctx().clone(), |name: String| {
+            crate::process::is_running(&name)
         })?,
     )?;
     Ok(())
@@ -527,7 +534,15 @@ mod sandbox_tests {
 
     #[test]
     fn sandbox_exposes_expected_helpers() {
-        for api in ["host", "domain", "glob", "__evalMatch", "__domainMatch"] {
+        for api in [
+            "host",
+            "domain",
+            "glob",
+            "__evalMatch",
+            "__domainMatch",
+            "processRunning",
+            "__processRunning",
+        ] {
             let ty = probe_typeof(api).unwrap();
             assert_eq!(ty, "function", "{api} should be a function");
         }
@@ -728,6 +743,32 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
         assert!(!glob_match("a[b-", "example.com/path"));
         // A valid (if unusual) pattern must still not panic.
         let _ = glob_match("***", "example.com/path");
+    }
+
+    #[test]
+    fn process_running_can_drive_browser_selection() {
+        crate::process::replace_snapshot_for_tests(std::collections::HashSet::from([
+            "msedge".to_string()
+        ]));
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "brave",
+  handlers: [
+    {{
+      match: domain("github.com"),
+      browser: (url) => processRunning("edge") ? "edge" : "brave",
+    }},
+  ],
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        let url = Url::parse("https://github.com/org/repo").unwrap();
+        let ctx = RouteContext::default();
+        let (target, _) = rt.route(&url, &ctx).unwrap();
+        assert_eq!(target.unwrap().name.as_deref(), Some("edge"));
     }
 
     #[test]

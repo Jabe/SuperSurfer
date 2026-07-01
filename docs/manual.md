@@ -63,14 +63,19 @@ export default {
   defaultBrowser: "chrome",
   urlCleaning: "default",
   handlers: [
-    { match: domain("github.com"), browser: "chrome" },
+    {
+      match: domain("github.com"),
+      browser: (url) => (processRunning("edge") ? "edge" : "chrome"),
+    },
     { match: host("meet.google.com"), browser: "chrome:work" },
     { match: (url, ctx) => ctx.opener?.name === "Slack", browser: "firefox" },
   ],
 };
 ```
 
-Matcher helpers: `host`, `domain`, `suffix`, `glob`, `path`, `regex`, `all`, `not`.
+Matcher helpers: `host`, `domain`, `suffix`, `glob`, `path`, `regex`, `all`, `not`, `processRunning`.
+
+`processRunning(name)` returns whether a browser is running (e.g. `"edge"`, `"Microsoft Edge"`). The process list is snapshotted on the first call in each route, then reused for that link.
 
 Browser targets: `"chrome"`, `"firefox:Profile Name"`, `{ name: "Microsoft Edge", profile: "Work" }`.
 

@@ -58,6 +58,8 @@ export function path(pattern: string): Matcher;
 export function regex(pattern: RegExp): Matcher;
 export function all(...matchers: Matcher[]): Matcher;
 export function not(matcher: Matcher): Matcher;
+/** True when a browser or process name is currently running (e.g. `"edge"`, `"Microsoft Edge"`). */
+export function processRunning(name: string): boolean;
 
 declare const host: typeof import("./supersurfer").host;
 declare const domain: typeof import("./supersurfer").domain;
@@ -67,3 +69,4 @@ declare const path: typeof import("./supersurfer").path;
 declare const regex: typeof import("./supersurfer").regex;
 declare const all: typeof import("./supersurfer").all;
 declare const not: typeof import("./supersurfer").not;
+declare const processRunning: typeof import("./supersurfer").processRunning;

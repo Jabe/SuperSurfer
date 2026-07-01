@@ -161,6 +161,72 @@ pub fn normalize_browser_id(name: &str) -> &str {
     name
 }
 
+/// Names and aliases to match against running process comm/exe values.
+pub fn process_name_candidates(query: &str) -> Vec<String> {
+    let browser_id = normalize_browser_id(query);
+    let mut candidates = vec![query.to_string(), browser_id.to_string()];
+
+    for spec in known_browsers() {
+        if spec.id != browser_id {
+            continue;
+        }
+        candidates.push(spec.display_name.to_string());
+        for alias in spec.aliases {
+            candidates.push((*alias).to_string());
+        }
+        for bundle_id in spec.mac_bundle_ids {
+            candidates.push((*bundle_id).to_string());
+        }
+        for app_name in spec.mac_app_names {
+            candidates.push(app_name.trim_end_matches(".app").to_string());
+        }
+        candidates.extend(platform_process_names(spec.id));
+        break;
+    }
+
+    candidates.sort_unstable();
+    candidates.dedup();
+    candidates
+}
+
+fn platform_process_names(browser_id: &str) -> Vec<String> {
+    let names: &[&str] = match browser_id {
+        "safari" => &["safari", "com.apple.webkit"],
+        "chrome" => &[
+            "chrome",
+            "google chrome",
+            "google-chrome",
+            "google-chrome-stable",
+        ],
+        "chrome-canary" => &["chrome", "google chrome canary", "google-chrome-canary"],
+        "chromium" => &["chromium", "chromium-browser"],
+        "firefox" => &["firefox", "firefox-esr", "org.mozilla.firefox"],
+        "firefox-developer-edition" => &["firefox", "firefox developer edition"],
+        "zen" => &["zen", "zen-bin", "zen-browser"],
+        "waterfox" => &["waterfox", "waterfox-bin"],
+        "tor" => &["firefox", "tor browser", "tor-browser"],
+        "edge" => &[
+            "msedge",
+            "microsoft edge",
+            "microsoft-edge",
+            "microsoft-edge-stable",
+        ],
+        "edge-beta" => &["msedge", "microsoft edge beta", "microsoft-edge-beta"],
+        "edge-canary" => &["msedge", "microsoft edge canary", "microsoft-edge-sxs"],
+        "brave" => &["brave", "brave-browser", "brave browser"],
+        "brave-beta" => &["brave", "brave-browser-beta", "brave beta"],
+        "brave-nightly" => &["brave", "brave-browser-nightly", "brave nightly"],
+        "arc" => &["arc", "arc browser"],
+        "dia" => &["dia"],
+        "opera" => &["opera", "opera stable"],
+        "opera-gx" => &["opera", "opera gx"],
+        "vivaldi" => &["vivaldi", "vivaldi-bin", "vivaldi-stable"],
+        "ungoogled-chromium" => &["chromium", "ungoogled-chromium"],
+        _ => &[],
+    };
+    names.iter().map(|name| (*name).to_string()).collect()
+}
+
 pub fn browser_id_for_bundle_id(bundle_id: &str) -> Option<&'static str> {
     for spec in known_browsers() {
         for id in spec.mac_bundle_ids {
@@ -1005,6 +1071,16 @@ fn discover_chromium_profiles(support_dir: &Path) -> Result<Vec<BrowserProfile>>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_name_candidates_include_browser_aliases() {
+        let names = process_name_candidates("Microsoft Edge");
+        assert!(names.iter().any(|n| n.eq_ignore_ascii_case("msedge")));
+        assert!(names.iter().any(|n| n.eq_ignore_ascii_case("edge")));
+        assert!(names
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case("Microsoft Edge")));
+    }
 
     #[test]
     fn normalizes_common_display_names() {

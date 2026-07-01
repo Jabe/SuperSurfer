@@ -36,6 +36,10 @@ function not(matcher) {
   return (url, ctx) => !__evalMatch(matcher, url, ctx);
 }
 
+function processRunning(name) {
+  return !!globalThis.__processRunning(String(name));
+}
+
 function __evalMatch(matcher, url, ctx) {
   if (typeof matcher === "function") {
     return !!matcher(url, ctx);
