@@ -1,21 +1,21 @@
 # SuperSurfer manual
 
-SuperSurfer registers as your default browser, intercepts link opens, runs your TypeScript routing config, and forwards each URL to the right browser and profile.
+SuperSurfer registers as your default browser, intercepts link opens, runs your JavaScript routing config, and forwards each URL to the right browser and profile.
 
 ## First run
 
 The first time you start SuperSurfer it creates:
 
-- `config.ts` — your routing rules
-- `supersurfer.d.ts` — TypeScript types for editors
+- `config.js` — your routing rules
+- `supersurfer.d.ts` — type definitions for editor autocomplete (via JSDoc)
 
 Config locations:
 
 | Platform | Path |
 |---|---|
-| macOS | `~/Library/Application Support/SuperSurfer/config.ts` |
-| Windows | `%APPDATA%\SuperSurfer\config.ts` |
-| Linux | `~/.config/SuperSurfer/config.ts` |
+| macOS | `~/Library/Application Support/SuperSurfer/config.js` |
+| Windows | `%APPDATA%\SuperSurfer\config.js` |
+| Linux | `~/.config/SuperSurfer/config.js` |
 
 ## Install per platform
 
@@ -57,9 +57,8 @@ supersurfer logs
 
 ## Example config
 
-```ts
-import type { RouterConfig } from "./supersurfer";
-
+```js
+/** @type {import('./supersurfer').RouterConfig} */
 export default {
   defaultBrowser: "chrome",
   urlCleaning: "default",
@@ -68,7 +67,7 @@ export default {
     { match: host("meet.google.com"), browser: "chrome:work" },
     { match: (url, ctx) => ctx.opener?.name === "Slack", browser: "firefox" },
   ],
-} satisfies RouterConfig;
+};
 ```
 
 Matcher helpers: `host`, `domain`, `suffix`, `glob`, `path`, `regex`, `all`, `not`.
@@ -77,7 +76,7 @@ Browser targets: `"chrome"`, `"firefox:Profile Name"`, `{ name: "Microsoft Edge"
 
 ## From Finicky
 
-Copy your `~/.finicky.js` into `config.ts`, add the `import type` line and `satisfies RouterConfig`. Replace `finicky.matchHostnames([...])` with a local helper or built-in matchers. Use an LLM plus `supersurfer.d.ts` for one-shot migration. Validate with `supersurfer doctor` and `supersurfer test <url>`.
+Copy your `~/.finicky.js` into `config.js`, add a `/** @type {import('./supersurfer').RouterConfig} */` comment above `export default`. Replace `finicky.matchHostnames([...])` with a local helper or built-in matchers. Use an LLM plus `supersurfer.d.ts` for one-shot migration. Validate with `supersurfer doctor` and `supersurfer test <url>`.
 
 ## Troubleshooting
 

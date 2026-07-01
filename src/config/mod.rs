@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 pub mod cache;
 pub mod loader;
+pub mod prepare;
 pub mod scaffold;
-pub mod transpile;
 
 pub fn config_dir() -> Result<PathBuf> {
     let dirs = ProjectDirs::from("", "", "SuperSurfer")
@@ -17,14 +17,7 @@ pub fn config_dir() -> Result<PathBuf> {
 }
 
 pub fn config_path() -> Result<PathBuf> {
-    let dir = config_dir()?;
-    for name in ["config.ts", "config.js"] {
-        let path = dir.join(name);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-    Ok(dir.join("config.ts"))
+    Ok(config_dir()?.join("config.js"))
 }
 
 pub fn cache_dir() -> Result<PathBuf> {
@@ -43,7 +36,7 @@ pub fn types_stub() -> &'static str {
 
 pub fn write_scaffold(force: bool) -> Result<(PathBuf, scaffold::ScaffoldPlan)> {
     let dir = config_dir()?;
-    let config = dir.join("config.ts");
+    let config = dir.join("config.js");
     let types = types_path()?;
 
     if config.exists() && !force {

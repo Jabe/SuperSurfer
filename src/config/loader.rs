@@ -1,5 +1,5 @@
 use crate::config::cache;
-use crate::config::transpile;
+use crate::config::prepare;
 use crate::script::runtime::ScriptRuntime;
 use anyhow::Result;
 use std::path::Path;
@@ -19,12 +19,8 @@ pub fn load_config(path: &Path) -> Result<LoadedConfig> {
     let js = match cache::read_cached(&cache_dir, &key)? {
         Some(cached) => cached,
         None => {
-            let transpiled = if path.extension().and_then(|e| e.to_str()) == Some("ts") {
-                transpile::transpile(&source, path)?
-            } else {
-                source.replace("export default", "globalThis.__SUPERSURFER_CONFIG__ =")
-            };
-            let wrapped = wrap_config_script(&transpiled);
+            let prepared = prepare::prepare_config_source(&source);
+            let wrapped = wrap_config_script(&prepared);
             cache::write_cached(&cache_dir, &key, &wrapped)?;
             wrapped
         }

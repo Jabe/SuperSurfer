@@ -47,7 +47,7 @@ pub fn welcome(fresh_bootstrap: bool) -> Result<()> {
         platform::open_url_in_default_browser(LANDING_URL)?;
         println!("SuperSurfer is ready.");
         println!("Opened setup guide: {LANDING_URL}");
-        println!("Next: edit config.ts, run `supersurfer doctor`, then `supersurfer register`.");
+        println!("Next: edit config.js, run `supersurfer doctor`, then `supersurfer register`.");
     } else {
         println!("SuperSurfer — cross-platform browser router");
         println!("  supersurfer doctor          show config and browsers");

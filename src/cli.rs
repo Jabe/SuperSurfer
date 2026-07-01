@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "supersurfer",
-    about = "Cross-platform browser router with TypeScript config"
+    about = "Cross-platform browser router with JavaScript config"
 )]
 pub struct Cli {
     #[command(subcommand)]

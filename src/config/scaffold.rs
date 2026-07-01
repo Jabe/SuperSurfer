@@ -29,13 +29,12 @@ pub fn plan() -> Result<ScaffoldPlan> {
 
 pub fn render(plan: &ScaffoldPlan) -> String {
     format!(
-        r#"import type {{ RouterConfig }} from "./supersurfer";
-
+        r#"/** @type {{import('./supersurfer').RouterConfig}} */
 export default {{
   defaultBrowser: "{default}",
   urlCleaning: "default",
   handlers: [],
-}} satisfies RouterConfig;
+}};
 "#,
         default = plan.default_browser,
     )
@@ -116,6 +115,7 @@ mod tests {
         let config = render(&plan);
         assert!(config.contains(r#"defaultBrowser: "brave""#));
         assert!(config.contains("handlers: []"));
+        assert!(config.contains("@type {import('./supersurfer').RouterConfig}"));
         assert!(!config.contains("example.com"));
         assert!(!config.contains("zoom.us"));
         assert!(!config.contains("Slack"));

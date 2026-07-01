@@ -2,7 +2,7 @@
 name = "supersurfer"
 version = "0.1.0"
 edition = "2021"
-description = "Cross-platform default browser router with TypeScript config"
+description = "Cross-platform default browser router with JavaScript config"
 license = "MIT"
 repository = "https://github.com/Jabe/SuperSurfer"
 

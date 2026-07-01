@@ -2,7 +2,7 @@
 
 **One config. Every browser. macOS + Windows + Linux.**
 
-SuperSurfer registers as your OS default browser, intercepts every link open, evaluates a TypeScript routing script, and forwards the URL to the right browser/profile.
+SuperSurfer registers as your OS default browser, intercepts every link open, evaluates a JavaScript routing config, and forwards the URL to the right browser/profile.
 
 **Manual:** [docs/manual.md](docs/manual.md) (also opened in your browser on first run)
 
@@ -29,7 +29,7 @@ cargo build --release
 ./target/release/supersurfer register
 ```
 
-First run (no arguments) creates `config.ts` and `supersurfer.d.ts`, then opens the [setup guide](docs/manual.md) in your default browser. URL routing (`supersurfer https://…`) also bootstraps config silently when needed.
+First run (no arguments) creates `config.js` and `supersurfer.d.ts`, then opens the [setup guide](docs/manual.md) in your default browser. URL routing (`supersurfer https://…`) also bootstraps config silently when needed.
 
 Legacy explicit init:
 
@@ -39,15 +39,14 @@ Legacy explicit init:
 
 Config lives at:
 
-- macOS: `~/Library/Application Support/SuperSurfer/config.ts`
-- Windows: `%APPDATA%\SuperSurfer\config.ts`
-- Linux: `~/.config/SuperSurfer/config.ts`
+- macOS: `~/Library/Application Support/SuperSurfer/config.js`
+- Windows: `%APPDATA%\SuperSurfer\config.js`
+- Linux: `~/.config/SuperSurfer/config.js`
 
 ## Example config
 
-```ts
-import type { RouterConfig } from "./supersurfer";
-
+```js
+/** @type {import('./supersurfer').RouterConfig} */
 export default {
   defaultBrowser: "chrome",
   urlCleaning: "default",
@@ -56,12 +55,12 @@ export default {
     { match: [host("meet.google.com"), suffix(".zoom.us")], browser: "chrome:work" },
     { match: (url, ctx) => ctx.opener?.name === "Slack", browser: "firefox" },
   ],
-} satisfies RouterConfig;
+};
 ```
 
 ## From Finicky
 
-There is no built-in migrate command. SuperSurfer already supports most Finicky config patterns (`{ name, profile }` browser targets, dynamic `browser` handlers, `rewrite` rules). Copy your `~/.finicky.js` into `config.ts`, add `import type { RouterConfig } from "./supersurfer"` and `} satisfies RouterConfig`, then adjust:
+There is no built-in migrate command. SuperSurfer already supports most Finicky config patterns (`{ name, profile }` browser targets, dynamic `browser` handlers, `rewrite` rules). Copy your `~/.finicky.js` into `config.js`, add a `/** @type {import('./supersurfer').RouterConfig} */` comment above `export default`, then adjust:
 
 - `finicky.matchHostnames([...])` → a local `matchHostnames()` helper, or `host` / `suffix` / `regex` matchers
 - `finicky.opener` → `ctx.opener`
@@ -152,7 +151,7 @@ When registered as the default browser, the OS invokes the packaged app with the
 
 ```
 OS URL event → SuperSurfer (Rust)
-                ├─ Config loader (TS → type-strip → QuickJS)
+                ├─ Config loader (JS → QuickJS)
                 ├─ URL pre-processor (unwrap + tracker strip)
                 ├─ handlers / rewrite evaluation
                 ├─ Browser resolver (abstract name → platform launch)
@@ -164,7 +163,7 @@ OS URL event → SuperSurfer (Rust)
 This is an initial implementation of the browser router spec:
 
 - Rust core with QuickJS sandboxed config runtime
-- TypeScript config via lightweight type-stripping + cache
+- JavaScript config with JSDoc types + cache
 - Matcher helpers (`host`, `domain`, `suffix`, `glob`, `path`, `regex`, `all`, `not`)
 - Built-in URL cleaning (Outlook safelinks, Google redirects, UTM stripping)
 - macOS `SuperSurfer.app` bundle + Launch Services / duti registration
