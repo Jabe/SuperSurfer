@@ -699,6 +699,52 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
     }
 
     #[test]
+    fn rewrite_urlsearchparams_string_constructor_unwraps_safelinks() {
+        assert_eq!(
+            rewrite_url(
+                r#"return new URLSearchParams(u.search).get("url") || u.href;"#,
+                "https://teams.public.onecdn.static.microsoft/evergreen-assets/safelinks/2/atp-safelinks.html?url=https%3A%2F%2Fgitlab.example.net%2Ffoo"
+            ),
+            "https://gitlab.example.net/foo"
+        );
+    }
+
+    #[test]
+    fn rewrite_teams_safelinks_finicky_style() {
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "brave",
+  handlers: [
+    {{
+      match: (url) => url.hostname.endsWith(".example.net"),
+      browser: {{ name: "Microsoft Edge", profile: "Profile 1" }},
+    }},
+  ],
+  rewrite: [
+    {{
+      match: (url) =>
+        url.hostname.endsWith("safelinks.protection.outlook.com") ||
+        ((url.hostname === "statics.teams.cdn.office.net" || url.hostname === "teams.public.onecdn.static.microsoft") && url.pathname.includes("atp-safelinks")),
+      url: (url) => new URLSearchParams(url.search).get("url") || url.href,
+    }},
+  ],
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        let url = Url::parse("https://teams.public.onecdn.static.microsoft/evergreen-assets/safelinks/2/atp-safelinks.html?url=https%3A%2F%2Fgitlab.example.net%2Ffoo").unwrap();
+        let ctx = RouteContext::default();
+        let (target, out) = rt.route(&url, &ctx).unwrap();
+        assert_eq!(out.as_str(), "https://gitlab.example.net/foo");
+        assert_eq!(
+            target.as_ref().and_then(|t| t.name.as_deref()),
+            Some("edge:Profile 1")
+        );
+    }
+
+    #[test]
     fn matcher_can_read_searchparams_get() {
         let js = format!(
             r#"{}{}

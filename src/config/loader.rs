@@ -14,7 +14,8 @@ pub struct LoadedConfig {
 pub fn load_config(path: &Path) -> Result<LoadedConfig> {
     let source = super::read_config_source(path)?;
     let cache_dir = super::cache_dir()?;
-    let key = cache::cache_key(&source, path);
+    let helpers = ScriptRuntime::helpers_prelude();
+    let key = cache::cache_key(&source, path, helpers);
 
     let js = match cache::read_cached(&cache_dir, &key)? {
         Some(cached) => cached,

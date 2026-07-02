@@ -63,11 +63,15 @@ globalThis.console = {
 // parsed URL and reads the mutated state back. Serialization fidelity is handled
 // on the Rust side from `_pairs`, so toString() here is intentionally lightweight.
 class URLSearchParams {
-  constructor(pairs) {
+  constructor(init) {
     this._pairs = [];
-    if (Array.isArray(pairs)) {
-      for (const pair of pairs) {
+    if (Array.isArray(init)) {
+      for (const pair of init) {
         this._pairs.push([String(pair[0]), String(pair[1])]);
+      }
+    } else if (typeof init === "string") {
+      for (const [key, value] of __parseQuery(init)) {
+        this._pairs.push([key, value]);
       }
     }
   }
