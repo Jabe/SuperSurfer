@@ -1,4 +1,3 @@
-use crate::config::cache;
 use crate::config::prepare;
 use crate::script::runtime::ScriptRuntime;
 use anyhow::Result;
@@ -13,19 +12,8 @@ pub struct LoadedConfig {
 
 pub fn load_config(path: &Path) -> Result<LoadedConfig> {
     let source = super::read_config_source(path)?;
-    let cache_dir = super::cache_dir()?;
-    let helpers = ScriptRuntime::helpers_prelude();
-    let key = cache::cache_key(&source, path, helpers);
-
-    let js = match cache::read_cached(&cache_dir, &key)? {
-        Some(cached) => cached,
-        None => {
-            let prepared = prepare::prepare_config_source(&source);
-            let wrapped = wrap_config_script(&prepared);
-            cache::write_cached(&cache_dir, &key, &wrapped)?;
-            wrapped
-        }
-    };
+    let prepared = prepare::prepare_config_source(&source);
+    let js = wrap_config_script(&prepared);
 
     let runtime = ScriptRuntime::from_js(&js)?;
     Ok(LoadedConfig {

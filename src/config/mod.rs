@@ -3,7 +3,6 @@ use directories::ProjectDirs;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub mod cache;
 pub mod loader;
 pub mod prepare;
 pub mod scaffold;

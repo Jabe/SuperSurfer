@@ -168,7 +168,7 @@ OS URL event → SuperSurfer (Rust)
 This is an initial implementation of the browser router spec:
 
 - Rust core with QuickJS sandboxed config runtime
-- JavaScript config with JSDoc types + cache
+- JavaScript config with JSDoc types
 - Matcher helpers (`host`, `domain`, `suffix`, `glob`, `path`, `regex`, `all`, `not`, `processRunning`)
 - Built-in URL cleaning (Outlook safelinks, Google redirects, UTM stripping)
 - macOS `SuperSurfer.app` bundle + Launch Services / duti registration
