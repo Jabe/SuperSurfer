@@ -2,6 +2,7 @@ use crate::config;
 use crate::context::{Context, Opener};
 use crate::logging;
 use crate::platform;
+use crate::preflight;
 use crate::routing::Router;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -45,6 +46,23 @@ pub enum Commands {
         #[arg(long, default_value_t = 50)]
         lines: usize,
     },
+    /// Manage hosts allowed for HTTP preflight link resolution
+    Resolve {
+        #[command(subcommand)]
+        command: ResolveCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ResolveCommands {
+    /// Allow preflight resolve for a host (e.g. redirect.example.com)
+    Allow { host: String },
+    /// Remove a host from the preflight resolve allowlist
+    Revoke { host: String },
+    /// List hosts allowed for preflight resolve
+    List,
+    /// Dry-run preflight resolve for a URL (no browser launch)
+    Test { url: String },
 }
 
 pub fn run() -> Result<()> {
@@ -72,6 +90,7 @@ pub fn run() -> Result<()> {
         Commands::Test { url, opener, open } => cmd_test(&url, opener.as_deref(), open),
         Commands::UpdateRules => cmd_update_rules(),
         Commands::Logs { lines } => logging::tail_logs(lines),
+        Commands::Resolve { command } => cmd_resolve(command),
     }
 }
 
@@ -180,6 +199,110 @@ fn cmd_doctor() -> Result<()> {
     if let Some(desktop) = platform::desktop_file_path() {
         println!("Desktop entry: {}", desktop.display());
     }
+    println!();
+    println!("Preflight resolve allowlist:");
+    match preflight::list_allowed_hosts() {
+        Ok(hosts) if hosts.is_empty() => {
+            println!("  (empty — run `supersurfer resolve allow <host>`)");
+        }
+        Ok(hosts) => {
+            for host in hosts {
+                println!("  - {host}");
+            }
+        }
+        Err(err) => println!("  error: {err}"),
+    }
+    println!("  file: {}", preflight::consent_path().display());
+    match preflight::protection_status() {
+        Ok(preflight::ConsentProtection::Guarded) => {
+            println!("  protection: root-owned (sudo required to modify)");
+        }
+        Ok(preflight::ConsentProtection::Missing) => {
+            println!("  protection: none (run `supersurfer resolve allow <host>`, sudo required)");
+        }
+        Err(err) => println!("  protection: error ({err})"),
+    }
+    Ok(())
+}
+
+fn cmd_resolve(command: ResolveCommands) -> Result<()> {
+    match command {
+        ResolveCommands::Allow { host } => preflight::allow_host(&host),
+        ResolveCommands::Revoke { host } => preflight::revoke_host(&host),
+        ResolveCommands::List => {
+            let hosts = preflight::list_allowed_hosts()?;
+            if hosts.is_empty() {
+                println!("No hosts allowed for preflight resolve.");
+                println!("Run `supersurfer resolve allow <host>` to add one (sudo required).");
+            } else {
+                for host in hosts {
+                    println!("{host}");
+                }
+            }
+            if preflight::protection_status()? == preflight::ConsentProtection::Guarded {
+                println!("# root-owned allowlist — sudo required to modify");
+            }
+            Ok(())
+        }
+        ResolveCommands::Test { url } => cmd_resolve_test(&url),
+    }
+}
+
+fn cmd_resolve_test(url: &str) -> Result<()> {
+    let router = Router::new()?;
+    let probe = router.probe_preflight(url, &Context::default())?;
+
+    println!("input:    {}", probe.input_url);
+    if probe.prepared_url != probe.input_url {
+        println!("prepared: {}", probe.prepared_url);
+    }
+    println!("host:     {}", probe.host);
+    println!(
+        "config:   {}",
+        if probe.config_matched {
+            "match"
+        } else {
+            "no match"
+        }
+    );
+    println!(
+        "consent:  {}",
+        if probe.host_consented {
+            "allowed"
+        } else {
+            "not allowed"
+        }
+    );
+
+    if !probe.config_matched {
+        println!("preflight: skipped (no matching resolve rule)");
+    } else if !probe.host_consented {
+        println!(
+            "preflight: skipped (run `supersurfer resolve allow {}`)",
+            probe.host
+        );
+    } else if let Some(resolved) = &probe.resolved_url {
+        println!("resolved: {resolved}");
+    } else if let Some(err) = &probe.preflight_error {
+        println!("preflight: failed ({err})");
+    } else {
+        println!("preflight: skipped");
+    }
+
+    if let Some(duration) = probe.lookup_duration {
+        println!(
+            "lookup:   {}",
+            crate::preflight::format_lookup_duration(duration)
+        );
+    }
+
+    if let Some(browser) = &probe.browser {
+        println!("browser:  {browser}");
+        if let Some(profile) = &probe.profile {
+            println!("profile:  {profile}");
+        }
+    }
+
     Ok(())
 }
 

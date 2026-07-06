@@ -145,25 +145,47 @@ impl ScriptRuntime {
     }
 
     pub fn route(&self, url: &Url, context: &RouteContext) -> Result<(Option<BrowserTarget>, Url)> {
+        let prepared = self.prepare_url(url, context)?;
+        let target = self.match_handlers(&prepared, context)?;
+        Ok((target, prepared))
+    }
+
+    pub fn prepare_url(&self, url: &Url, context: &RouteContext) -> Result<Url> {
         let _process_guard = crate::process::RouteProcessGuard::new();
         reset_budget(&self.budget);
         let working = RefCell::new(url.clone());
-        let target = self.route_inner(&working, context)?;
-        Ok((target, working.into_inner()))
-    }
-
-    fn route_inner(
-        &self,
-        url: &RefCell<Url>,
-        context: &RouteContext,
-    ) -> Result<Option<BrowserTarget>> {
-        self.ctx.with(|ctx| {
+        self.ctx.with(|ctx| -> Result<()> {
             let config: Object = ctx.globals().get("__SUPERSURFER_CONFIG__")?;
             if let Ok(rules) = config.get::<_, Array>("rewrite") {
-                apply_rewrite(&ctx, &rules, url, context)?;
+                apply_rewrite(&ctx, &rules, &working, context)?;
             }
+            Ok(())
+        })?;
+        Ok(working.into_inner())
+    }
 
-            let current = url.borrow();
+    pub fn should_resolve(&self, url: &Url, context: &RouteContext) -> Result<bool> {
+        let _process_guard = crate::process::RouteProcessGuard::new();
+        reset_budget(&self.budget);
+        self.ctx.with(|ctx| {
+            let config: Object = ctx.globals().get("__SUPERSURFER_CONFIG__")?;
+            let rules: Array = match config.get("resolve") {
+                Ok(rules) => rules,
+                Err(_) => return Ok(false),
+            };
+            eval_resolve_rules(&ctx, &rules, url, context)
+        })
+    }
+
+    pub fn match_handlers(
+        &self,
+        url: &Url,
+        context: &RouteContext,
+    ) -> Result<Option<BrowserTarget>> {
+        let _process_guard = crate::process::RouteProcessGuard::new();
+        reset_budget(&self.budget);
+        self.ctx.with(|ctx| {
+            let config: Object = ctx.globals().get("__SUPERSURFER_CONFIG__")?;
             let handlers: Array = config.get("handlers").context("config missing handlers")?;
             let len = handlers.len();
 
@@ -171,13 +193,30 @@ impl ScriptRuntime {
                 let handler: Object = handlers.get(i)?;
                 let browser_value: Value = handler.get("browser")?;
                 let matcher: Value = handler.get("match")?;
-                if eval_match(&ctx, matcher, &current, context)? {
-                    return Ok(Some(resolve_browser_target(&ctx, browser_value, &current)?));
+                if eval_match(&ctx, matcher, url, context)? {
+                    return Ok(Some(resolve_browser_target(&ctx, browser_value, url)?));
                 }
             }
             Ok(None)
         })
     }
+}
+
+fn eval_resolve_rules<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    rules: &Array<'js>,
+    url: &Url,
+    context: &RouteContext,
+) -> Result<bool> {
+    let len = rules.len();
+    for i in 0..len {
+        let rule: Object = rules.get(i)?;
+        let matcher: Value = rule.get("match")?;
+        if eval_match(ctx, matcher, url, context)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn apply_rewrite<'js>(
@@ -707,6 +746,30 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
             ),
             "https://gitlab.example.net/foo"
         );
+    }
+
+    #[test]
+    fn resolve_rules_are_evaluated_without_network() {
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "brave",
+  handlers: [],
+  resolve: [
+    {{
+      match: (url) => url.hostname === "redirect.example.com" && url.pathname.startsWith("/r/"),
+    }},
+  ],
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        let ctx = RouteContext::default();
+        let redirect = Url::parse("https://redirect.example.com/r/abc/m/1").unwrap();
+        let direct = Url::parse("https://redirect.example.com/web").unwrap();
+        assert!(rt.should_resolve(&redirect, &ctx).unwrap());
+        assert!(!rt.should_resolve(&direct, &ctx).unwrap());
     }
 
     #[test]

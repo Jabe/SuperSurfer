@@ -2,10 +2,12 @@ use crate::browser::{launch::launch_browser, registry::BrowserRegistry};
 use crate::config::loader::{load_default_config, LoadedConfig};
 use crate::context::Context;
 use crate::logging;
+use crate::preflight;
 use crate::script::runtime::BrowserTarget;
 use crate::url_clean;
 use anyhow::{Context as _, Result};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use url::Url;
 
 type ResolvedTarget = (
@@ -18,6 +20,21 @@ type ResolvedTarget = (
     bool,
     bool,
 );
+
+#[derive(Debug, Clone)]
+pub struct PreflightProbe {
+    pub input_url: String,
+    pub prepared_url: String,
+    pub host: String,
+    pub config_matched: bool,
+    pub host_consented: bool,
+    pub resolved_url: Option<String>,
+    pub preflight_error: Option<String>,
+    /// Wall time for the HTTP HEAD lookup when config and consent allowed it.
+    pub lookup_duration: Option<Duration>,
+    pub browser: Option<String>,
+    pub profile: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub struct RouteDecision {
@@ -61,8 +78,8 @@ impl Router {
         let cleaning_mode = self.config.runtime.url_cleaning_mode()?;
         url_clean::clean_url(&mut url, &cleaning_mode)?;
 
-        let (target, routed_url, script_fallback) = match self.config.runtime.route(&url, context) {
-            Ok((target, rewritten)) => (target, rewritten, false),
+        let (target, routed_url, script_fallback) = match self.route_script(&url, context) {
+            Ok(result) => result,
             Err(err) => {
                 eprintln!("routing script error: {err}. Falling back to defaultBrowser.");
                 (None, url.clone(), true)
@@ -135,6 +152,97 @@ impl Router {
 
     pub fn references_opener(&self) -> bool {
         self.config.references_opener
+    }
+
+    /// Dry-run preflight resolve: url cleaning, rewrite, HEAD probe, and post-resolve routing.
+    pub fn probe_preflight(&self, raw_url: &str, context: &Context) -> Result<PreflightProbe> {
+        let raw_url = crate::input_url::normalize_input_url(raw_url)?;
+        let mut url = Url::parse(&raw_url).with_context(|| format!("invalid URL: {raw_url}"))?;
+        let input_url = url.to_string();
+
+        let cleaning_mode = self.config.runtime.url_cleaning_mode()?;
+        url_clean::clean_url(&mut url, &cleaning_mode)?;
+
+        let prepared = self.config.runtime.prepare_url(&url, context)?;
+        let host = prepared.host_str().unwrap_or_default().to_string();
+        let config_matched = self.config.runtime.should_resolve(&prepared, context)?;
+        let host_consented = preflight::is_allowed(&host)?;
+
+        let (resolved_url, preflight_error, lookup_duration) = if config_matched && host_consented {
+            let started = Instant::now();
+            match preflight::resolve(&prepared) {
+                Ok(result) => (
+                    Some(result.resolved.to_string()),
+                    None,
+                    Some(result.lookup_duration),
+                ),
+                Err(err) => (None, Some(err.to_string()), Some(started.elapsed())),
+            }
+        } else {
+            (None, None, None)
+        };
+
+        let route_url = resolved_url
+            .as_deref()
+            .and_then(|s| Url::parse(s).ok())
+            .unwrap_or(prepared.clone());
+
+        let (browser, profile) = match self.config.runtime.match_handlers(&route_url, context) {
+            Ok(Some(target)) => {
+                let spec = target.name.unwrap_or_default();
+                let (browser_id, prof) = parse_browser_spec(&spec);
+                match self.registry.resolve(&browser_id, prof.as_deref()) {
+                    Ok(resolved) => (Some(resolved.display_name), resolved.profile),
+                    Err(_) => (Some(spec), prof),
+                }
+            }
+            Ok(None) => {
+                let default = self.config.runtime.default_browser()?;
+                let (browser_id, prof) = parse_browser_spec(&default);
+                match self.registry.resolve(&browser_id, prof.as_deref()) {
+                    Ok(resolved) => (Some(resolved.display_name), resolved.profile),
+                    Err(_) => (Some(default), prof),
+                }
+            }
+            Err(_) => (None, None),
+        };
+
+        Ok(PreflightProbe {
+            input_url,
+            prepared_url: prepared.to_string(),
+            host,
+            config_matched,
+            host_consented,
+            resolved_url,
+            preflight_error,
+            lookup_duration,
+            browser,
+            profile,
+        })
+    }
+
+    fn route_script(
+        &self,
+        url: &Url,
+        context: &Context,
+    ) -> Result<(Option<BrowserTarget>, Url, bool)> {
+        let prepared = self.config.runtime.prepare_url(url, context)?;
+        let routed_url = self
+            .maybe_preflight(&prepared, context)?
+            .unwrap_or(prepared);
+        let target = self.config.runtime.match_handlers(&routed_url, context)?;
+        Ok((target, routed_url, false))
+    }
+
+    fn maybe_preflight(&self, url: &Url, context: &Context) -> Result<Option<Url>> {
+        let host = match url.host_str() {
+            Some(host) => host,
+            None => return Ok(None),
+        };
+
+        let config_matched = self.config.runtime.should_resolve(url, context)?;
+        let host_consented = preflight::is_allowed(host)?;
+        preflight::maybe_resolve(url, host_consented, config_matched)
     }
 
     fn resolve_target(&self, target: BrowserTarget) -> Result<ResolvedTarget> {

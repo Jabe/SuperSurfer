@@ -22,8 +22,22 @@ pub fn script_log_file() -> Result<PathBuf> {
     Ok(log_dir()?.join("script.log"))
 }
 
+pub fn preflight_log_file() -> Result<PathBuf> {
+    Ok(log_dir()?.join("preflight.log"))
+}
+
 pub fn append_decision(line: &str) -> Result<()> {
     let path = log_file()?;
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    let timestamp = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "unknown-time".to_string());
+    writeln!(file, "{timestamp} {line}")?;
+    Ok(())
+}
+
+pub fn append_preflight(line: &str) -> Result<()> {
+    let path = preflight_log_file()?;
     let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
     let timestamp = OffsetDateTime::now_utc()
         .format(&Rfc3339)

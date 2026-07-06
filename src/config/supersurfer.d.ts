@@ -43,10 +43,17 @@ export interface HandlerRule {
   browser: BrowserTarget | ((url: URL) => BrowserTarget);
 }
 
+export interface ResolveRule {
+  /** When this matches, SuperSurfer may HEAD-probe the URL if the host is allowlisted via `supersurfer resolve allow`. */
+  match: Matcher;
+}
+
 export interface RouterConfig {
   defaultBrowser: string;
   handlers: HandlerRule[];
   rewrite?: RewriteRule[];
+  /** HTTP preflight rules for opaque short links. Requires `supersurfer resolve allow <host>`. */
+  resolve?: ResolveRule[];
   urlCleaning?: "off" | "default";
 }
 
