@@ -46,7 +46,7 @@ pub enum Commands {
         #[arg(long, default_value_t = 50)]
         lines: usize,
     },
-    /// Manage hosts allowed for HTTP preflight link resolution
+    /// HTTP preflight link resolution (allow, list, test)
     Resolve {
         #[command(subcommand)]
         command: ResolveCommands,
@@ -222,6 +222,7 @@ fn cmd_doctor() -> Result<()> {
         }
         Err(err) => println!("  protection: error ({err})"),
     }
+    println!("  probe: supersurfer resolve test <url>");
     Ok(())
 }
 

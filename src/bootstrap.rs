@@ -50,9 +50,10 @@ pub fn welcome(fresh_bootstrap: bool) -> Result<()> {
         println!("Next: edit config.js, run `supersurfer doctor`, then `supersurfer register`.");
     } else {
         println!("SuperSurfer — cross-platform browser router");
-        println!("  supersurfer doctor          show config and browsers");
-        println!("  supersurfer test <url>      dry-run routing");
-        println!("  supersurfer register        set as default browser");
+        println!("  supersurfer doctor               show config and browsers");
+        println!("  supersurfer test <url>           dry-run routing");
+        println!("  supersurfer resolve test <url>   dry-run preflight resolve");
+        println!("  supersurfer register             set as default browser");
         println!("Manual: {LANDING_URL}");
     }
     Ok(())
