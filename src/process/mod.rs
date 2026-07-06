@@ -40,16 +40,40 @@ pub fn replace_snapshot_for_tests(names: HashSet<String>) {
 }
 
 pub fn is_running(query: &str) -> bool {
+    let browser_id = registry::normalize_browser_id(query);
     let candidates = registry::process_name_candidates(query);
     ROUTE_SNAPSHOT.with(|cell| {
         if cell.borrow().is_none() {
             *cell.borrow_mut() = Some(snapshot_running_processes());
         }
-        let snapshot = cell.borrow();
+        let mut snapshot = cell.borrow();
         let running = snapshot.as_ref().expect("process snapshot missing");
-        candidates
+        if running.is_empty() {
+            drop(snapshot);
+            *cell.borrow_mut() = Some(snapshot_running_processes());
+            snapshot = cell.borrow();
+        }
+        let running = snapshot.as_ref().expect("process snapshot missing");
+        if candidates
             .iter()
             .any(|candidate| running.iter().any(|proc| process_matches(proc, candidate)))
+        {
+            return true;
+        }
+        running_path_markers_match(browser_id, running)
+    })
+}
+
+fn running_path_markers_match(browser_id: &str, running: &HashSet<String>) -> bool {
+    let browser_id = registry::normalize_browser_id(browser_id);
+    let markers = registry::running_path_markers(browser_id);
+    if markers.is_empty() {
+        return false;
+    }
+    running.iter().any(|proc| {
+        markers
+            .iter()
+            .any(|marker| process_matches(proc, marker) || proc.contains(marker.as_str()))
     })
 }
 
@@ -115,6 +139,16 @@ mod tests {
             "msedge"
         ));
         assert!(!process_matches("knowledge-agent", "edge"));
+    }
+
+    #[test]
+    fn running_path_markers_detect_edge_app_bundle_paths() {
+        let running = HashSet::from([
+            "/applications/microsoft edge.app/contents/macos/microsoft edge".to_string(),
+            "microsoft edge helper (renderer".to_string(),
+        ]);
+        assert!(running_path_markers_match("edge", &running));
+        assert!(running_path_markers_match("Microsoft Edge", &running));
     }
 
     #[test]

@@ -192,7 +192,12 @@ impl ScriptRuntime {
                 let browser_value: Value = handler.get("browser")?;
                 let matcher: Value = handler.get("match")?;
                 if eval_match(&ctx, matcher, url, context)? {
-                    return Ok(Some(resolve_browser_target(&ctx, browser_value, url)?));
+                    return Ok(Some(resolve_browser_target(
+                        &ctx,
+                        browser_value,
+                        url,
+                        context,
+                    )?));
                 }
             }
             Ok(None)
@@ -271,11 +276,13 @@ fn resolve_browser_target<'js>(
     ctx: &rquickjs::Ctx<'js>,
     value: Value<'js>,
     url: &Url,
+    context: &RouteContext,
 ) -> Result<BrowserTarget> {
     if value.is_function() {
         let func = value.as_function().context("expected browser function")?;
         let url_obj = make_url_object(ctx, url)?;
-        let result: Value = func.call((url_obj,))?;
+        let ctx_obj = make_context_object(ctx, context)?;
+        let result: Value = func.call((url_obj, ctx_obj))?;
         return parse_browser_target(result);
     }
     parse_browser_target(value)

@@ -161,6 +161,28 @@ pub fn normalize_browser_id(name: &str) -> &str {
     name
 }
 
+/// Path and bundle markers used to detect a running browser on macOS.
+pub fn running_path_markers(browser_id: &str) -> Vec<String> {
+    let mut markers = Vec::new();
+    for spec in known_browsers() {
+        if spec.id != browser_id {
+            continue;
+        }
+        for app_name in spec.mac_app_names {
+            let app = app_name.to_ascii_lowercase();
+            markers.push(app.clone());
+            markers.push(app.trim_end_matches(".app").to_string());
+        }
+        for bundle_id in spec.mac_bundle_ids {
+            markers.push(bundle_id.to_ascii_lowercase());
+        }
+        break;
+    }
+    markers.sort_unstable();
+    markers.dedup();
+    markers
+}
+
 /// Names and aliases to match against running process comm/exe values.
 pub fn process_name_candidates(query: &str) -> Vec<String> {
     let browser_id = normalize_browser_id(query);
