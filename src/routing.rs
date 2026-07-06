@@ -156,6 +156,7 @@ impl Router {
 
     /// Dry-run preflight resolve: url cleaning, rewrite, HEAD probe, and post-resolve routing.
     pub fn probe_preflight(&self, raw_url: &str, context: &Context) -> Result<PreflightProbe> {
+        let _process_guard = crate::process::RouteProcessGuard::new();
         let raw_url = crate::input_url::normalize_input_url(raw_url)?;
         let mut url = Url::parse(&raw_url).with_context(|| format!("invalid URL: {raw_url}"))?;
         let input_url = url.to_string();
@@ -226,6 +227,7 @@ impl Router {
         url: &Url,
         context: &Context,
     ) -> Result<(Option<BrowserTarget>, Url, bool)> {
+        let _process_guard = crate::process::RouteProcessGuard::new();
         let prepared = self.config.runtime.prepare_url(url, context)?;
         let routed_url = self
             .maybe_preflight(&prepared, context)?

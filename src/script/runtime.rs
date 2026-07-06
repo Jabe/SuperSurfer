@@ -145,13 +145,13 @@ impl ScriptRuntime {
     }
 
     pub fn route(&self, url: &Url, context: &RouteContext) -> Result<(Option<BrowserTarget>, Url)> {
+        let _process_guard = crate::process::RouteProcessGuard::new();
         let prepared = self.prepare_url(url, context)?;
         let target = self.match_handlers(&prepared, context)?;
         Ok((target, prepared))
     }
 
     pub fn prepare_url(&self, url: &Url, context: &RouteContext) -> Result<Url> {
-        let _process_guard = crate::process::RouteProcessGuard::new();
         reset_budget(&self.budget);
         let working = RefCell::new(url.clone());
         self.ctx.with(|ctx| -> Result<()> {
@@ -165,7 +165,6 @@ impl ScriptRuntime {
     }
 
     pub fn should_resolve(&self, url: &Url, context: &RouteContext) -> Result<bool> {
-        let _process_guard = crate::process::RouteProcessGuard::new();
         reset_budget(&self.budget);
         self.ctx.with(|ctx| {
             let config: Object = ctx.globals().get("__SUPERSURFER_CONFIG__")?;
@@ -182,7 +181,6 @@ impl ScriptRuntime {
         url: &Url,
         context: &RouteContext,
     ) -> Result<Option<BrowserTarget>> {
-        let _process_guard = crate::process::RouteProcessGuard::new();
         reset_budget(&self.budget);
         self.ctx.with(|ctx| {
             let config: Object = ctx.globals().get("__SUPERSURFER_CONFIG__")?;
