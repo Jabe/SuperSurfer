@@ -10,7 +10,8 @@ function domain(name) {
 
 function suffix(s) {
   const bare = s.startsWith(".") ? s.slice(1) : s;
-  return (url) => url.hostname === bare || url.hostname.endsWith(s);
+  // Require a label boundary so suffix("example.com") does not match notexample.com.
+  return (url) => url.hostname === bare || url.hostname.endsWith("." + bare);
 }
 
 function glob(pattern) {

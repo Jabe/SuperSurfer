@@ -367,11 +367,8 @@ fn install_host_functions(globals: &Object<'_>) -> Result<()> {
 }
 
 fn domain_match(hostname: &str, domain: &str) -> bool {
-    if hostname == domain {
-        return true;
-    }
-    hostname == domain.strip_prefix('.').unwrap_or(domain)
-        || hostname.ends_with(&format!(".{domain}"))
+    let domain = domain.strip_prefix('.').unwrap_or(domain);
+    hostname == domain || hostname.ends_with(&format!(".{domain}"))
 }
 
 fn glob_match(pattern: &str, target: &str) -> bool {
@@ -978,5 +975,44 @@ globalThis.__SUPERSURFER_CONFIG__ = {{ defaultBrowser: "chrome", handlers: [] }}
         // failed String coercion -- it must be detected and fall back.
         let rt = runtime_with_url_cleaning("[{ host: \"example.com\" }]");
         assert_eq!(rt.url_cleaning_mode().unwrap(), "default");
+    }
+
+    #[test]
+    fn domain_match_requires_label_boundary() {
+        assert!(domain_match("example.com", "example.com"));
+        assert!(domain_match("foo.example.com", "example.com"));
+        assert!(domain_match("foo.example.com", ".example.com"));
+        assert!(!domain_match("notexample.com", "example.com"));
+        assert!(!domain_match("evilexample.com", "example.com"));
+    }
+
+    #[test]
+    fn suffix_matcher_requires_label_boundary() {
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "chrome",
+  handlers: [{{ match: suffix("example.com"), browser: "firefox" }}],
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        let ctx = RouteContext::default();
+
+        let match_url = Url::parse("https://foo.example.com/x").unwrap();
+        let (target, _) = rt.route(&match_url, &ctx).unwrap();
+        assert_eq!(target.unwrap().name.as_deref(), Some("firefox"));
+
+        let exact = Url::parse("https://example.com/x").unwrap();
+        let (target, _) = rt.route(&exact, &ctx).unwrap();
+        assert_eq!(target.unwrap().name.as_deref(), Some("firefox"));
+
+        let no_match = Url::parse("https://notexample.com/x").unwrap();
+        let (target, _) = rt.route(&no_match, &ctx).unwrap();
+        assert!(
+            target.is_none(),
+            "suffix must not match without a label boundary"
+        );
     }
 }
