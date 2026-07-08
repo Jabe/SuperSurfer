@@ -258,7 +258,7 @@ mod platform {
                 return true;
             }
             // Combined forms e.g. "r,w" or "M,RX"
-            for sub in token.split(|c: char| c == ',' || c == ' ') {
+            for sub in token.split([',', ' ']) {
                 let s = sub.trim();
                 if matches!(
                     s,
