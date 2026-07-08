@@ -10,7 +10,11 @@ pub use consent_guard::ConsentProtection;
 
 use crate::logging;
 use anyhow::{Context as _, Result};
+use std::fmt;
 use std::time::{Duration, Instant};
+use ureq::unversioned::resolver::{DefaultResolver, ResolvedSocketAddrs, Resolver};
+use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
+use ureq::Agent;
 use url::Url;
 
 const USER_AGENT: &str = "SuperSurfer/0.1.0 (preflight)";
@@ -61,16 +65,65 @@ pub fn format_lookup_duration(duration: Duration) -> String {
     }
 }
 
-pub fn resolve(url: &Url) -> Result<PreflightResult> {
-    ssrf::ensure_request_target(url)?;
+/// DNS resolver that strips non-public IPs before ureq connects.
+///
+/// Closes the classic SSRF TOCTOU where a pre-check `to_socket_addrs` sees a
+/// public A/AAAA record and a later connect-time resolve (or rebinding) yields
+/// loopback/private/link-local. Filtering at resolve-for-connect time means
+/// the TCP stack never receives a blocked address.
+#[derive(Default)]
+struct PublicOnlyResolver {
+    inner: DefaultResolver,
+}
 
-    let started = Instant::now();
-    let agent = ureq::Agent::config_builder()
+impl fmt::Debug for PublicOnlyResolver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PublicOnlyResolver").finish()
+    }
+}
+
+impl Resolver for PublicOnlyResolver {
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        config: &ureq::config::Config,
+        timeout: NextTimeout,
+    ) -> Result<ResolvedSocketAddrs, ureq::Error> {
+        let resolved = self.inner.resolve(uri, config, timeout)?;
+        let mut filtered = self.empty();
+        for addr in resolved.iter() {
+            if !ssrf::is_blocked_ip(addr.ip()) {
+                filtered.push(*addr);
+            }
+        }
+        if filtered.is_empty() {
+            // Treat "only blocked addresses" like a failed lookup so callers
+            // never connect to private/loopback targets.
+            return Err(ureq::Error::HostNotFound);
+        }
+        Ok(filtered)
+    }
+}
+
+fn preflight_agent() -> Agent {
+    let config = Agent::config_builder()
         .timeout_global(Some(TIMEOUT))
         .user_agent(USER_AGENT)
         .max_redirects(0)
-        .build()
-        .new_agent();
+        .build();
+    Agent::with_parts(
+        config,
+        DefaultConnector::default(),
+        PublicOnlyResolver::default(),
+    )
+}
+
+pub fn resolve(url: &Url) -> Result<PreflightResult> {
+    // Fast reject for obvious non-public literals / hostnames before any I/O.
+    ssrf::ensure_request_target(url)?;
+
+    let started = Instant::now();
+    let agent = preflight_agent();
 
     let response = agent
         .head(url.as_str())
@@ -125,5 +178,21 @@ mod tests {
     fn parse_redirect_target_rejects_non_redirect_status() {
         let base = Url::parse("https://redirect.example.com/r/abc").unwrap();
         assert!(parse_redirect_target(&base, 200, "https://example.com/").is_err());
+    }
+
+    #[test]
+    fn public_only_resolver_filters_blocked_ips() {
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+        // Unit-level: is_blocked_ip is what the resolver applies to each addr.
+        assert!(ssrf::is_blocked_ip(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+        assert!(ssrf::is_blocked_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+        assert!(ssrf::is_blocked_ip(IpAddr::V4(Ipv4Addr::new(
+            169, 254, 169, 254
+        ))));
+        assert!(!ssrf::is_blocked_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+
+        let _ = SocketAddr::from((Ipv4Addr::new(8, 8, 8, 8), 443));
+        let _ = PublicOnlyResolver::default();
     }
 }

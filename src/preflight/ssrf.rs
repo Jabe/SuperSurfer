@@ -62,7 +62,9 @@ fn is_blocked_hostname(host: &str) -> bool {
         || host == "metadata.goog"
 }
 
-fn is_blocked_ip(ip: IpAddr) -> bool {
+/// True for loopback, private, link-local, CGNAT, ULA, and other non-public ranges.
+/// Used by both static host checks and the preflight DNS resolver pin.
+pub(crate) fn is_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_blocked_ipv4(v4),
         IpAddr::V6(v6) => is_blocked_ipv6(v6),
