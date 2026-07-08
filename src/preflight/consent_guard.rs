@@ -187,14 +187,98 @@ mod platform {
 
     #[cfg(windows)]
     fn consent_protection_status_impl() -> Result<ConsentProtection> {
-        use std::fs;
-
         let guarded = guarded_consent_path_impl();
-        if guarded.exists() {
+        if !guarded.exists() {
+            return Ok(ConsentProtection::Missing);
+        }
+        // Existence alone is not enough: a user-writable ProgramData file must
+        // not count as a protected SSRF allowlist. Require hardened ACLs.
+        if windows_allowlist_acl_is_hardened(&guarded) {
             Ok(ConsentProtection::Guarded)
         } else {
             Ok(ConsentProtection::Missing)
         }
+    }
+
+    /// True when `icacls` shows no write/modify/full grant to broad principals
+    /// (Users, Everyone, Authenticated Users) and at least one Admin/SYSTEM ACE.
+    ///
+    /// This matches what `save_guarded_consent_impl` applies:
+    /// inheritance removed; Administrators/SYSTEM full; Users read-only.
+    #[cfg(windows)]
+    fn windows_allowlist_acl_is_hardened(path: &Path) -> bool {
+        use std::process::Command;
+
+        let output = match Command::new("icacls").arg(path.as_os_str()).output() {
+            Ok(o) if o.status.success() => o,
+            _ => return false,
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let lower = text.to_ascii_lowercase();
+
+        let mut saw_admin_or_system = false;
+        for line in lower.lines() {
+            // icacls lines look like: `path BUILTIN\Administrators:(F)` or
+            // indented `         BUILTIN\Users:(R)`.
+            let is_admin = line.contains("administrators");
+            let is_system = line.contains("nt authority\\system") || line.contains("\\system:");
+            if is_admin || is_system {
+                saw_admin_or_system = true;
+            }
+
+            let is_broad = line.contains("everyone")
+                || line.contains("authenticated users")
+                || line.contains("builtin\\users")
+                || line.contains("\\users:");
+            if is_broad && windows_ace_grants_write(line) {
+                return false;
+            }
+        }
+        saw_admin_or_system
+    }
+
+    /// Whether an icacls ACE line grants write/modify/full (not mere read/execute).
+    #[cfg(any(windows, test))]
+    pub(super) fn windows_ace_grants_write(ace_line: &str) -> bool {
+        // Permissions appear as (F), (M), (W), (RX), (R), often combined like (OI)(CI)(F).
+        // Avoid treating (R) as write: match known write-ish tokens inside parentheses.
+        for part in ace_line.split('(').skip(1) {
+            let token = part.split(')').next().unwrap_or("").trim();
+            // Skip inheritance-only markers.
+            if matches!(
+                token,
+                "oi" | "ci" | "io" | "np" | "i" | "r" | "x" | "rx" | "rd" | "rc" | "s" | "n"
+            ) {
+                continue;
+            }
+            if matches!(
+                token,
+                "f" | "m" | "w" | "d" | "wd" | "ad" | "dc" | "de" | "wea" | "wa" | "wdac" | "wo"
+            ) {
+                return true;
+            }
+            // Combined forms e.g. "r,w" or "M,RX"
+            for sub in token.split(|c: char| c == ',' || c == ' ') {
+                let s = sub.trim();
+                if matches!(
+                    s,
+                    "f" | "m"
+                        | "w"
+                        | "d"
+                        | "wd"
+                        | "ad"
+                        | "dc"
+                        | "de"
+                        | "wea"
+                        | "wa"
+                        | "wdac"
+                        | "wo"
+                ) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -205,5 +289,27 @@ mod platform {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn shell_quote(value: &str) -> String {
         format!("'{}'", value.replace('\'', "'\"'\"'"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::platform::windows_ace_grants_write;
+
+    #[test]
+    fn users_read_only_is_not_write() {
+        assert!(!windows_ace_grants_write(r"    builtin\users:(r)"));
+        assert!(!windows_ace_grants_write(r"    builtin\users:(rx)"));
+        assert!(!windows_ace_grants_write(r"    builtin\users:(oi)(ci)(rx)"));
+    }
+
+    #[test]
+    fn users_full_or_modify_is_write() {
+        assert!(windows_ace_grants_write(r"    builtin\users:(f)"));
+        assert!(windows_ace_grants_write(r"    builtin\users:(m)"));
+        assert!(windows_ace_grants_write(r"    everyone:(w)"));
+        assert!(windows_ace_grants_write(
+            r"    nt authority\authenticated users:(m)"
+        ));
     }
 }
