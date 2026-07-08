@@ -747,9 +747,28 @@ fn discover_inner(fresh: bool) -> Result<BrowserRegistry> {
     }
     let fingerprint = cache::macos_fingerprint(&snapshot);
 
+    // Always build live path installs first so a poisoned cache cannot supply
+    // the executable path. Profiles may still come from cache on a hit.
+    let mut live = HashMap::new();
+    for (spec, app_path) in &resolved {
+        live.insert(
+            spec.id.to_string(),
+            BrowserInstall {
+                id: spec.id.to_string(),
+                display_name: spec.display_name.to_string(),
+                app_path: Some(app_path.to_string_lossy().to_string()),
+                bundle_id: read_bundle_id(app_path)
+                    .or_else(|| spec.mac_bundle_ids.first().map(|s| s.to_string())),
+                profiles: vec![],
+            },
+        );
+    }
+
     if !fresh {
-        if let Some(browsers) = cache::load(&fingerprint)? {
-            return Ok(BrowserRegistry { browsers });
+        if let Some(cached) = cache::load(&fingerprint)? {
+            if let Some(browsers) = cache::rebind_app_paths(cached, live.clone()) {
+                return Ok(BrowserRegistry { browsers });
+            }
         }
     }
 
@@ -958,16 +977,26 @@ fn discover_windows_cached(fresh: bool) -> Result<BrowserRegistry> {
     let start_menu = discover_windows::enumerate_start_menu_browsers()?;
     let fingerprint = cache::registry_fingerprint(&start_menu);
 
-    if !fresh {
-        if let Some(browsers) = cache::load(&fingerprint)? {
-            return Ok(BrowserRegistry { browsers });
+    // Live path resolution (no profile scan) — authoritative for app_path.
+    let mut live = HashMap::new();
+    for spec in known_browsers() {
+        if let Some(install) = discover_windows::discover_one(&spec, &start_menu, false)? {
+            live.insert(spec.id.to_string(), install);
         }
     }
 
-    let load_profiles = fresh;
+    if !fresh {
+        if let Some(cached) = cache::load(&fingerprint)? {
+            if let Some(browsers) = cache::rebind_app_paths(cached, live.clone()) {
+                return Ok(BrowserRegistry { browsers });
+            }
+        }
+    }
+
+    // Cache miss / fresh: load profiles and persist.
     let mut browsers = HashMap::new();
     for spec in known_browsers() {
-        if let Some(install) = discover_windows::discover_one(&spec, &start_menu, load_profiles)? {
+        if let Some(install) = discover_windows::discover_one(&spec, &start_menu, true)? {
             browsers.insert(spec.id.to_string(), install);
         }
     }
