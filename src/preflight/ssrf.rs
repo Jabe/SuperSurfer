@@ -76,10 +76,19 @@ fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
         || ip.is_unspecified()
         || ip.is_broadcast()
         || ip.octets()[0] == 0
-        || matches!(ip.octets(), [100, 64, _, _]) // CGNAT carrier-grade
+        // RFC 6598 CGNAT: 100.64.0.0/10
+        || {
+            let o = ip.octets();
+            o[0] == 100 && (64..128).contains(&o[1])
+        }
 }
 
 fn is_blocked_ipv6(ip: Ipv6Addr) -> bool {
+    // IPv4-mapped (::ffff:x.x.x.x) and deprecated IPv4-compatible (::x.x.x.x)
+    // must inherit the IPv4 blocklist (loopback, private, CGNAT, metadata, …).
+    if let Some(v4) = ip.to_ipv4() {
+        return is_blocked_ipv4(v4);
+    }
     ip.is_loopback()
         || ip.is_unspecified()
         || ip.segments()[0] & 0xfe00 == 0xfc00 // unique local
@@ -108,5 +117,28 @@ mod tests {
     #[test]
     fn allows_public_hostname() {
         assert!(ensure_public_host("example.com").is_ok());
+    }
+
+    #[test]
+    fn blocks_full_cgnat_range() {
+        assert!(ensure_public_host("100.64.0.1").is_err());
+        assert!(ensure_public_host("100.65.0.1").is_err());
+        assert!(ensure_public_host("100.127.255.255").is_err());
+        assert!(is_blocked_ipv4(Ipv4Addr::new(100, 64, 0, 1)));
+        assert!(is_blocked_ipv4(Ipv4Addr::new(100, 127, 1, 1)));
+        assert!(!is_blocked_ipv4(Ipv4Addr::new(100, 63, 0, 1)));
+        assert!(!is_blocked_ipv4(Ipv4Addr::new(100, 128, 0, 1)));
+        assert!(!is_blocked_ipv4(Ipv4Addr::new(8, 8, 8, 8)));
+    }
+
+    #[test]
+    fn blocks_ipv4_mapped_loopback_and_private() {
+        assert!(ensure_public_host("::ffff:127.0.0.1").is_err());
+        assert!(ensure_public_host("::ffff:192.168.1.1").is_err());
+        assert!(ensure_public_host("::ffff:169.254.169.254").is_err());
+        assert!(ensure_public_host("::ffff:100.64.1.1").is_err());
+        assert!(is_blocked_ip(IpAddr::V6(
+            "::ffff:127.0.0.1".parse::<Ipv6Addr>().unwrap()
+        )));
     }
 }

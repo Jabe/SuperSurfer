@@ -143,17 +143,17 @@ mod platform {
                 "SYSTEM:F",
                 "Users:R",
             ])
-            .status();
+            .status()
+            .context("failed to run icacls to harden allowlist ACLs")?;
 
-        match status {
-            Ok(s) if s.success() => Ok(()),
-            _ => {
-                eprintln!(
-                    "note: could not harden ACLs with icacls; allowlist may still be user-writable"
-                );
-                Ok(())
-            }
+        if !status.success() {
+            anyhow::bail!(
+                "icacls failed to harden {} — allowlist would remain user-writable.\n\
+                 Re-run `supersurfer resolve allow` from an elevated terminal.",
+                path.display()
+            );
         }
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
@@ -176,7 +176,9 @@ mod platform {
             return Ok(ConsentProtection::Missing);
         }
         let meta = fs::metadata(&guarded)?;
-        if meta.uid() == 0 {
+        // Root-owned alone is not enough: reject group/other-writable files so a
+        // mis-chmod'd allowlist is not treated as a protected SSRF consent source.
+        if meta.uid() == 0 && meta.mode() & 0o022 == 0 {
             Ok(ConsentProtection::Guarded)
         } else {
             Ok(ConsentProtection::Missing)
