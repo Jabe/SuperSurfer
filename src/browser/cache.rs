@@ -45,13 +45,25 @@ pub fn macos_fingerprint(entries: &[(String, std::time::SystemTime)]) -> String 
 /// Load a cached registry only if its fingerprint still matches the current
 /// start-menu snapshot. A mismatch (browser installed/uninstalled, command
 /// path changed) invalidates the cache so discovery runs again.
+///
+/// Corrupt or unreadable cache files are treated as a miss so discovery can
+/// repopulate them; a bad cache must never block default-browser launches.
 pub fn load(expected_fingerprint: &str) -> Result<Option<HashMap<String, BrowserInstall>>> {
     let path = cache_path()?;
     if !path.exists() {
         return Ok(None);
     }
-    let content = fs::read_to_string(&path)?;
-    let cached: CachedRegistry = serde_json::from_str(&content)?;
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(_) => return Ok(None),
+    };
+    let cached: CachedRegistry = match serde_json::from_str(&content) {
+        Ok(cached) => cached,
+        Err(_) => {
+            let _ = fs::remove_file(&path);
+            return Ok(None);
+        }
+    };
     if cached.fingerprint != expected_fingerprint {
         return Ok(None);
     }
@@ -60,11 +72,21 @@ pub fn load(expected_fingerprint: &str) -> Result<Option<HashMap<String, Browser
 
 pub fn save(fingerprint: &str, browsers: &HashMap<String, BrowserInstall>) -> Result<()> {
     let path = cache_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let payload = CachedRegistry {
         fingerprint: fingerprint.to_string(),
         browsers: browsers.clone(),
     };
-    fs::write(path, serde_json::to_string(&payload)?)?;
+    let data = serde_json::to_string(&payload)?;
+    // Atomic replace so a crash mid-write cannot leave a truncated JSON file.
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, data)?;
+    if path.exists() {
+        let _ = fs::remove_file(&path);
+    }
+    fs::rename(&tmp, &path)?;
     Ok(())
 }
 

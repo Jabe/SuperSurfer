@@ -30,16 +30,22 @@ pub fn maybe_resolve(url: &Url, host_consented: bool, config_matched: bool) -> R
     let host = url.host_str().unwrap_or_default();
     match resolve(url) {
         Ok(result) => {
-            logging::append_preflight(&format!(
+            if let Err(err) = logging::append_preflight(&format!(
                 "ok {} -> {} ({})",
                 url.as_str(),
                 result.resolved.as_str(),
                 format_lookup_duration(result.lookup_duration)
-            ))?;
+            )) {
+                eprintln!("warning: failed to append preflight log: {err}");
+            }
             Ok(Some(result.resolved))
         }
         Err(err) => {
-            logging::append_preflight(&format!("skip {} ({err})", url.as_str()))?;
+            if let Err(log_err) =
+                logging::append_preflight(&format!("skip {} ({err})", url.as_str()))
+            {
+                eprintln!("warning: failed to append preflight log: {log_err}");
+            }
             eprintln!("preflight skipped for {host}: {err}");
             Ok(None)
         }

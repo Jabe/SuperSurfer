@@ -122,10 +122,13 @@ impl Router {
             app_path,
         };
 
-        logging::append_decision(&format!(
+        // Never gate browser launch on log I/O (permissions, full disk, etc.).
+        if let Err(err) = logging::append_decision(&format!(
             "{} -> {} ({})",
             decision.input_url, decision.cleaned_url, decision.browser
-        ))?;
+        )) {
+            eprintln!("warning: failed to append decision log: {err}");
+        }
 
         Ok(decision)
     }
