@@ -157,16 +157,56 @@ fn mime_default_handler(mime: &str) -> Option<String> {
 }
 
 fn desktop_file_contents(exec_path: &str) -> String {
+    let exec = quote_desktop_exec(exec_path);
     format!(
         "[Desktop Entry]\n\
          Type=Application\n\
          Name=SuperSurfer\n\
          Comment=Browser router\n\
-         Exec={exec_path} %u\n\
+         Exec={exec} %u\n\
          Terminal=false\n\
          Categories=Network;WebBrowser;\n\
          MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;\n\
          NoDisplay=false\n\
          StartupNotify=false\n"
     )
+}
+
+/// Quote a path for a Desktop Entry `Exec=` key (spaces, quotes, backslashes).
+fn quote_desktop_exec(path: &str) -> String {
+    if path
+        .chars()
+        .any(|c| c.is_whitespace() || matches!(c, '"' | '\\' | '$' | '`' | '\''))
+    {
+        format!("\"{}\"", path.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        path.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quote_desktop_exec_leaves_simple_paths() {
+        assert_eq!(
+            quote_desktop_exec("/usr/bin/supersurfer"),
+            "/usr/bin/supersurfer"
+        );
+    }
+
+    #[test]
+    fn quote_desktop_exec_quotes_spaces() {
+        assert_eq!(
+            quote_desktop_exec("/home/user/My Apps/supersurfer"),
+            "\"/home/user/My Apps/supersurfer\""
+        );
+    }
+
+    #[test]
+    fn desktop_file_quotes_spaced_exec() {
+        let contents = desktop_file_contents("/opt/My Apps/supersurfer");
+        assert!(contents.contains("Exec=\"/opt/My Apps/supersurfer\" %u\n"));
+    }
 }
