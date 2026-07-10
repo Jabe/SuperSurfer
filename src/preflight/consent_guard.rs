@@ -112,19 +112,29 @@ mod platform {
         Ok(())
     }
 
+    // Well-known SIDs, used instead of account names because names are localized
+    // ("Administrators" does not resolve on e.g. a German Windows). icacls accepts
+    // SIDs with a `*` prefix; SDDL uses the two-letter aliases.
+    #[cfg(target_os = "windows")]
+    const SID_ADMINISTRATORS: &str = "S-1-5-32-544";
+    #[cfg(target_os = "windows")]
+    const SID_SYSTEM: &str = "S-1-5-18";
+    #[cfg(target_os = "windows")]
+    const SID_USERS: &str = "S-1-5-32-545";
+
     #[cfg(target_os = "windows")]
     fn save_guarded_consent_impl(path: &Path, contents: &str) -> Result<()> {
         use std::fs;
-        use std::process::Command;
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create {} — run an elevated terminal",
-                    parent.display()
-                )
-            })?;
-        }
+        let parent = path
+            .parent()
+            .context("guarded consent path has no parent directory")?;
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create {} — run an elevated terminal",
+                parent.display()
+            )
+        })?;
 
         fs::write(path, contents).with_context(|| {
             format!(
@@ -133,25 +143,48 @@ mod platform {
             )
         })?;
 
-        let path_arg = path.to_string_lossy().into_owned();
-        let status = Command::new("icacls")
-            .args([
-                &path_arg,
-                "/inheritance:r",
-                "/grant:r",
-                "Administrators:F",
-                "SYSTEM:F",
-                "Users:R",
-            ])
-            .status()
-            .context("failed to run icacls to harden allowlist ACLs")?;
+        // Harden the parent directory too: FILE_DELETE_CHILD there would let a
+        // user replace the allowlist wholesale. Grant directory read to Users so
+        // non-elevated SuperSurfer can still open the file (which stays Users:R).
+        harden_windows_acl(parent, "(OI)(CI)RX")?;
+        harden_windows_acl(path, "R")?;
+        Ok(())
+    }
 
-        if !status.success() {
-            anyhow::bail!(
-                "icacls failed to harden {} — allowlist would remain user-writable.\n\
-                 Re-run `supersurfer resolve allow` from an elevated terminal.",
-                path.display()
-            );
+    /// Reset `target` to: owner Administrators, no inheritance, Administrators
+    /// and SYSTEM full, Users limited to `users_grant`.
+    #[cfg(target_os = "windows")]
+    fn harden_windows_acl(target: &Path, users_grant: &str) -> Result<()> {
+        use std::process::Command;
+
+        let target_arg = target.to_string_lossy().into_owned();
+        let steps = [
+            vec![
+                target_arg.clone(),
+                "/setowner".into(),
+                format!("*{SID_ADMINISTRATORS}"),
+            ],
+            vec![
+                target_arg,
+                "/inheritance:r".into(),
+                "/grant:r".into(),
+                format!("*{SID_ADMINISTRATORS}:F"),
+                format!("*{SID_SYSTEM}:F"),
+                format!("*{SID_USERS}:{users_grant}"),
+            ],
+        ];
+        for args in steps {
+            let status = Command::new("icacls")
+                .args(args)
+                .status()
+                .context("failed to run icacls to harden allowlist ACLs")?;
+            if !status.success() {
+                anyhow::bail!(
+                    "icacls failed to harden {} — allowlist would remain user-writable.\n\
+                     Re-run `supersurfer resolve allow` from an elevated terminal.",
+                    target.display()
+                );
+            }
         }
         Ok(())
     }
@@ -192,93 +225,230 @@ mod platform {
             return Ok(ConsentProtection::Missing);
         }
         // Existence alone is not enough: a user-writable ProgramData file must
-        // not count as a protected SSRF allowlist. Require hardened ACLs.
-        if windows_allowlist_acl_is_hardened(&guarded) {
+        // not count as a protected SSRF allowlist. Require a hardened owner and
+        // DACL, read as SDDL so the check is locale-independent (icacls prints
+        // localized account names, e.g. "VORDEFINIERT\Administratoren").
+        let hardened = read_owner_dacl_sddl(&guarded)
+            .map(|sddl| sddl_is_hardened(&sddl))
+            .unwrap_or(false);
+        if hardened {
             Ok(ConsentProtection::Guarded)
         } else {
             Ok(ConsentProtection::Missing)
         }
     }
 
-    /// True when `icacls` shows no write/modify/full grant to broad principals
-    /// (Users, Everyone, Authenticated Users) and at least one Admin/SYSTEM ACE.
-    ///
-    /// This matches what `save_guarded_consent_impl` applies:
-    /// inheritance removed; Administrators/SYSTEM full; Users read-only.
+    /// Read a file's owner + DACL as an SDDL string via the security APIs.
     #[cfg(windows)]
-    fn windows_allowlist_acl_is_hardened(path: &Path) -> bool {
-        use std::process::Command;
-
-        let output = match Command::new("icacls").arg(path.as_os_str()).output() {
-            Ok(o) if o.status.success() => o,
-            _ => return false,
+    fn read_owner_dacl_sddl(path: &Path) -> Option<String> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::LocalFree;
+        use windows_sys::Win32::Security::Authorization::{
+            ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW,
+            SDDL_REVISION_1, SE_FILE_OBJECT,
         };
-        let text = String::from_utf8_lossy(&output.stdout);
-        let lower = text.to_ascii_lowercase();
+        use windows_sys::Win32::Security::{DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION};
 
-        let mut saw_admin_or_system = false;
-        for line in lower.lines() {
-            // icacls lines look like: `path BUILTIN\Administrators:(F)` or
-            // indented `         BUILTIN\Users:(R)`.
-            let is_admin = line.contains("administrators");
-            let is_system = line.contains("nt authority\\system") || line.contains("\\system:");
-            if is_admin || is_system {
-                saw_admin_or_system = true;
-            }
-
-            let is_broad = line.contains("everyone")
-                || line.contains("authenticated users")
-                || line.contains("builtin\\users")
-                || line.contains("\\users:");
-            if is_broad && windows_ace_grants_write(line) {
-                return false;
-            }
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let info = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        let mut descriptor: *mut core::ffi::c_void = core::ptr::null_mut();
+        let status = unsafe {
+            GetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                info,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        if status != 0 || descriptor.is_null() {
+            return None;
         }
-        saw_admin_or_system
+        let mut sddl_ptr: windows_sys::core::PWSTR = core::ptr::null_mut();
+        let mut sddl_len: u32 = 0;
+        let ok = unsafe {
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                descriptor,
+                SDDL_REVISION_1,
+                info,
+                &mut sddl_ptr,
+                &mut sddl_len,
+            )
+        };
+        let sddl = if ok != 0 && !sddl_ptr.is_null() {
+            let chars = unsafe { std::slice::from_raw_parts(sddl_ptr, sddl_len as usize) };
+            let end = chars.iter().position(|&c| c == 0).unwrap_or(chars.len());
+            Some(String::from_utf16_lossy(&chars[..end]))
+        } else {
+            None
+        };
+        unsafe {
+            if !sddl_ptr.is_null() {
+                LocalFree(sddl_ptr.cast());
+            }
+            LocalFree(descriptor);
+        }
+        sddl
     }
 
-    /// Whether an icacls ACE line grants write/modify/full (not mere read/execute).
+    /// Allow-list check of an owner+DACL SDDL string, matching what
+    /// `save_guarded_consent_impl` applies: owner Administrators (or SYSTEM),
+    /// protected DACL, and write access only for Administrators/SYSTEM.
+    ///
+    /// Fails closed: any unrecognized owner, ACE type, flag, or rights token
+    /// counts as NOT hardened. The owner matters because a file's owner holds
+    /// implicit WRITE_DAC and could re-grant themselves access at any time.
     #[cfg(any(windows, test))]
-    pub(super) fn windows_ace_grants_write(ace_line: &str) -> bool {
-        // Permissions appear as (F), (M), (W), (RX), (R), often combined like (OI)(CI)(F).
-        // Avoid treating (R) as write: match known write-ish tokens inside parentheses.
-        for part in ace_line.split('(').skip(1) {
-            let token = part.split(')').next().unwrap_or("").trim();
-            // Skip inheritance-only markers.
-            if matches!(
-                token,
-                "oi" | "ci" | "io" | "np" | "i" | "r" | "x" | "rx" | "rd" | "rc" | "s" | "n"
-            ) {
-                continue;
+    pub(super) fn sddl_is_hardened(sddl: &str) -> bool {
+        let sddl = sddl.to_ascii_uppercase();
+        let owner = match sddl_component(&sddl, "O:") {
+            Some(owner) => owner,
+            None => return false,
+        };
+        if !sddl_sid_is_admin_or_system(&owner) {
+            return false;
+        }
+        let dacl = match sddl_component(&sddl, "D:") {
+            Some(dacl) => dacl,
+            None => return false,
+        };
+        let (flags, aces) = split_dacl(&dacl);
+        // 'P' = protected: no ACEs inherited from the parent directory.
+        if !flags.contains('P') {
+            return false;
+        }
+
+        let mut saw_admin_or_system_grant = false;
+        for ace in aces {
+            let fields: Vec<&str> = ace.split(';').collect();
+            if fields.len() < 6 {
+                return false;
             }
-            if matches!(
-                token,
-                "f" | "m" | "w" | "d" | "wd" | "ad" | "dc" | "de" | "wea" | "wa" | "wdac" | "wo"
-            ) {
-                return true;
+            let (ace_type, ace_flags, rights, sid) = (fields[0], fields[1], fields[2], fields[5]);
+            match ace_type {
+                "A" => {}
+                // Deny ACEs only ever restrict access; audit/callback/unknown
+                // types mean we no longer understand the policy — fail closed.
+                "D" => continue,
+                _ => return false,
             }
-            // Combined forms e.g. "r,w" or "M,RX"
-            for sub in token.split([',', ' ']) {
-                let s = sub.trim();
-                if matches!(
-                    s,
-                    "f" | "m"
-                        | "w"
-                        | "d"
-                        | "wd"
-                        | "ad"
-                        | "dc"
-                        | "de"
-                        | "wea"
-                        | "wa"
-                        | "wdac"
-                        | "wo"
-                ) {
-                    return true;
+            if ace_flags.contains("ID") {
+                return false;
+            }
+            let mask = match sddl_rights_mask(rights) {
+                Some(mask) => mask,
+                None => return false,
+            };
+            if mask & SDDL_WRITE_MASK != 0 {
+                if !sddl_sid_is_admin_or_system(sid) {
+                    return false;
                 }
+                saw_admin_or_system_grant = true;
             }
         }
-        false
+        saw_admin_or_system_grant
+    }
+
+    /// Access-mask bits that allow changing the file's content or its policy:
+    /// FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES
+    /// | DELETE | WRITE_DAC | WRITE_OWNER | GENERIC_ALL | GENERIC_WRITE.
+    /// DELETE counts because delete-and-recreate replaces the file's contents.
+    #[cfg(any(windows, test))]
+    const SDDL_WRITE_MASK: u32 = 0x2
+        | 0x4
+        | 0x10
+        | 0x100
+        | 0x0001_0000
+        | 0x0004_0000
+        | 0x0008_0000
+        | 0x1000_0000
+        | 0x4000_0000;
+
+    #[cfg(any(windows, test))]
+    fn sddl_sid_is_admin_or_system(sid: &str) -> bool {
+        // BA/SY are the SDDL aliases for the SIDs below; which form appears
+        // depends on the converter, so accept both.
+        matches!(sid, "BA" | "SY" | "S-1-5-32-544" | "S-1-5-18")
+    }
+
+    /// Extract one SDDL component (e.g. everything after "O:" up to the next
+    /// top-level "O:"/"G:"/"D:"/"S:" tag).
+    #[cfg(any(windows, test))]
+    fn sddl_component(sddl: &str, tag: &str) -> Option<String> {
+        let start = sddl.find(tag)? + tag.len();
+        let rest = &sddl[start..];
+        let end = ["O:", "G:", "D:", "S:"]
+            .iter()
+            .filter_map(|marker| rest.find(marker))
+            .min()
+            .unwrap_or(rest.len());
+        Some(rest[..end].to_string())
+    }
+
+    /// Split a DACL component into its control flags (before the first ACE)
+    /// and the parenthesized ACE bodies.
+    #[cfg(any(windows, test))]
+    fn split_dacl(dacl: &str) -> (String, Vec<String>) {
+        let flags_end = dacl.find('(').unwrap_or(dacl.len());
+        let flags = dacl[..flags_end].to_string();
+        let mut aces = Vec::new();
+        let mut rest = &dacl[flags_end..];
+        while let Some(open) = rest.find('(') {
+            match rest[open..].find(')') {
+                Some(close) => {
+                    aces.push(rest[open + 1..open + close].to_string());
+                    rest = &rest[open + close + 1..];
+                }
+                None => break,
+            }
+        }
+        (flags, aces)
+    }
+
+    /// Convert an SDDL rights field ("FA", "0x1200a9", "GRGX", …) to an access
+    /// mask. Returns None for any unrecognized token so callers fail closed.
+    #[cfg(any(windows, test))]
+    fn sddl_rights_mask(rights: &str) -> Option<u32> {
+        if let Some(hex) = rights.strip_prefix("0X") {
+            return u32::from_str_radix(hex, 16).ok();
+        }
+        if !rights.len().is_multiple_of(2) {
+            return None;
+        }
+        let mut mask = 0u32;
+        for chunk in rights.as_bytes().chunks(2) {
+            mask |= match std::str::from_utf8(chunk).ok()? {
+                "GA" => 0x1000_0000,
+                "GX" => 0x2000_0000,
+                "GW" => 0x4000_0000,
+                "GR" => 0x8000_0000,
+                "RC" => 0x0002_0000,
+                "SD" => 0x0001_0000,
+                "WD" => 0x0004_0000,
+                "WO" => 0x0008_0000,
+                "FA" => 0x001F_01FF,
+                "FR" => 0x0012_0089,
+                "FW" => 0x0012_0116,
+                "FX" => 0x0012_00A0,
+                "KA" => 0x000F_003F,
+                "KR" | "KX" => 0x0002_0019,
+                "KW" => 0x0002_0006,
+                "CC" => 0x0001,
+                "DC" => 0x0002,
+                "LC" => 0x0004,
+                "SW" => 0x0008,
+                "RP" => 0x0010,
+                "WP" => 0x0020,
+                "DT" => 0x0040,
+                "LO" => 0x0080,
+                "CR" => 0x0100,
+                _ => return None,
+            };
+        }
+        Some(mask)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -294,22 +464,103 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::platform::windows_ace_grants_write;
+    use super::platform::sddl_is_hardened;
+
+    // What save_guarded_consent_impl produces: Administrators owner, protected
+    // DACL, Admins/SYSTEM full, Users read.
+    const HARDENED: &str = "O:BAG:SYD:PAI(A;;FA;;;BA)(A;;FA;;;SY)(A;;FR;;;BU)";
 
     #[test]
-    fn users_read_only_is_not_write() {
-        assert!(!windows_ace_grants_write(r"    builtin\users:(r)"));
-        assert!(!windows_ace_grants_write(r"    builtin\users:(rx)"));
-        assert!(!windows_ace_grants_write(r"    builtin\users:(oi)(ci)(rx)"));
+    fn hardened_descriptor_is_accepted() {
+        assert!(sddl_is_hardened(HARDENED));
+        // Raw-SID spellings and a SYSTEM owner are equivalent.
+        assert!(sddl_is_hardened(
+            "O:S-1-5-32-544D:P(A;;FA;;;S-1-5-32-544)(A;;FA;;;S-1-5-18)(A;;FR;;;S-1-5-32-545)"
+        ));
+        assert!(sddl_is_hardened("O:SYD:P(A;;FA;;;SY)"));
+        // Lowercase output from a converter must parse the same way.
+        assert!(sddl_is_hardened(&HARDENED.to_ascii_lowercase()));
     }
 
     #[test]
-    fn users_full_or_modify_is_write() {
-        assert!(windows_ace_grants_write(r"    builtin\users:(f)"));
-        assert!(windows_ace_grants_write(r"    builtin\users:(m)"));
-        assert!(windows_ace_grants_write(r"    everyone:(w)"));
-        assert!(windows_ace_grants_write(
-            r"    nt authority\authenticated users:(m)"
+    fn non_admin_owner_is_rejected() {
+        // The owner holds implicit WRITE_DAC even without a matching ACE.
+        assert!(!sddl_is_hardened(
+            "O:S-1-5-21-1-2-3-1001D:PAI(A;;FA;;;BA)(A;;FA;;;SY)(A;;FR;;;BU)"
         ));
+        assert!(!sddl_is_hardened("D:PAI(A;;FA;;;BA)(A;;FA;;;SY)"));
+    }
+
+    #[test]
+    fn named_user_write_ace_is_rejected() {
+        // The reported hole: Alice:(F) alongside the expected principals.
+        assert!(!sddl_is_hardened(
+            "O:BAD:PAI(A;;FA;;;S-1-5-21-1-2-3-1001)(A;;FA;;;SY)(A;;FR;;;BU)"
+        ));
+    }
+
+    #[test]
+    fn broad_write_grants_are_rejected() {
+        for sid in ["WD", "BU", "AU"] {
+            let sddl = format!("O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;FW;;;{sid})");
+            assert!(!sddl_is_hardened(&sddl), "{sid} write must reject");
+        }
+        // DELETE alone is enough to replace the file (delete + recreate).
+        assert!(!sddl_is_hardened("O:BAD:P(A;;FA;;;BA)(A;;SD;;;BU)"));
+        assert!(!sddl_is_hardened("O:BAD:P(A;;FA;;;BA)(A;;WDWO;;;BU)"));
+    }
+
+    #[test]
+    fn unprotected_dacl_is_rejected() {
+        // Without 'P' the parent directory's ACEs apply on top of these.
+        assert!(!sddl_is_hardened("O:BAD:AI(A;;FA;;;BA)(A;;FA;;;SY)"));
+        assert!(!sddl_is_hardened("O:BA"));
+    }
+
+    #[test]
+    fn inherited_or_exotic_aces_fail_closed() {
+        assert!(!sddl_is_hardened("O:BAD:P(A;ID;FA;;;BA)(A;;FA;;;SY)"));
+        // Conditional/callback ACE types are not understood — fail closed.
+        assert!(!sddl_is_hardened("O:BAD:P(XA;;FA;;;BA;(TRUE))(A;;FA;;;SY)"));
+    }
+
+    #[test]
+    fn deny_aces_do_not_grant() {
+        assert!(sddl_is_hardened(
+            "O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)(D;;FA;;;WD)"
+        ));
+    }
+
+    #[test]
+    fn hex_rights_are_evaluated() {
+        // 0x1200a9 = FILE_GENERIC_READ|EXECUTE (read-only) — fine for Users.
+        assert!(sddl_is_hardened(
+            "O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;0x1200a9;;;BU)"
+        ));
+        // 0x1301bf = FILE_GENERIC_READ|WRITE|EXECUTE|DELETE — not fine.
+        assert!(!sddl_is_hardened(
+            "O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;0x1301bf;;;BU)"
+        ));
+    }
+
+    #[test]
+    fn unknown_rights_tokens_fail_closed() {
+        assert!(!sddl_is_hardened("O:BAD:P(A;;FA;;;BA)(A;;FZ;;;BU)"));
+        assert!(!sddl_is_hardened("O:BAD:P(A;;FA;;;BA)(A;;FAX;;;BU)"));
+    }
+
+    #[test]
+    fn read_only_users_grant_is_not_write() {
+        // FR and generic-read/execute must not trip the write check.
+        assert!(sddl_is_hardened(
+            "O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;GRGX;;;BU)"
+        ));
+    }
+
+    #[test]
+    fn missing_admin_grant_is_rejected() {
+        // A descriptor nobody (Admins/SYSTEM) can write is misconfigured, not
+        // hardened — the saver always grants them full control.
+        assert!(!sddl_is_hardened("O:BAD:P(A;;FR;;;BU)"));
     }
 }
