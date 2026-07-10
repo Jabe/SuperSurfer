@@ -10,6 +10,11 @@ use std::time::{Duration, Instant};
 use url::Url;
 
 const EVAL_TIMEOUT: Duration = Duration::from_millis(250);
+// Hard caps so a runaway config (e.g. `let s = "a"; for (;;) s += s;`) fails the
+// route with a JS error instead of ballooning between interrupt checks until the
+// OS OOM-killer takes down the whole process.
+const EVAL_MEMORY_LIMIT: usize = 32 * 1024 * 1024;
+const EVAL_STACK_LIMIT: usize = 512 * 1024;
 
 static GLOB_MATCHERS: LazyLock<Mutex<HashMap<String, GlobMatcher>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -20,6 +25,8 @@ struct EvalBudget {
 
 fn new_runtime() -> Result<(Runtime, Arc<EvalBudget>)> {
     let runtime = Runtime::new().context("failed to create QuickJS runtime")?;
+    runtime.set_memory_limit(EVAL_MEMORY_LIMIT);
+    runtime.set_max_stack_size(EVAL_STACK_LIMIT);
     let budget = Arc::new(EvalBudget {
         started: Mutex::new(Instant::now()),
     });
@@ -920,6 +927,53 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
             started.elapsed() < Duration::from_secs(2),
             "interrupt handler should stop runaway matchers quickly"
         );
+    }
+
+    #[test]
+    fn route_caps_runaway_memory_allocation() {
+        // Exponential string growth allocates gigabytes between two interrupt
+        // checks; without the memory limit the OS OOM-killer would end the
+        // whole process instead of this returning an error.
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "chrome",
+  handlers: [{{ match: () => {{ let s = "a"; for (;;) s += s; }}, browser: "firefox" }}],
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        let url = Url::parse("https://example.com").unwrap();
+        let ctx = RouteContext::default();
+        assert!(rt.route(&url, &ctx).is_err());
+    }
+
+    #[test]
+    fn config_load_caps_runaway_memory_allocation() {
+        let js = format!(
+            "{}{}",
+            ScriptRuntime::helpers_prelude(),
+            "let s = \"a\"; for (;;) s += s;"
+        );
+        assert!(ScriptRuntime::from_js(&js).is_err());
+    }
+
+    #[test]
+    fn deep_recursion_errors_instead_of_smashing_stack() {
+        let js = format!(
+            r#"{}{}
+globalThis.__SUPERSURFER_CONFIG__ = {{
+  defaultBrowser: "chrome",
+  handlers: [{{ match: function f() {{ return f(); }}, browser: "firefox" }}],
+}};"#,
+            ScriptRuntime::helpers_prelude(),
+            ""
+        );
+        let rt = ScriptRuntime::from_js(&js).unwrap();
+        let url = Url::parse("https://example.com").unwrap();
+        let ctx = RouteContext::default();
+        assert!(rt.route(&url, &ctx).is_err());
     }
 
     fn runtime_with_url_cleaning(value: &str) -> ScriptRuntime {
