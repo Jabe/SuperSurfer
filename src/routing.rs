@@ -75,6 +75,7 @@ impl Router {
         let raw_url = crate::input_url::normalize_input_url(raw_url)?;
         let mut url = Url::parse(&raw_url).with_context(|| format!("invalid URL: {raw_url}"))?;
         let input_url = url.to_string();
+        crate::input_url::normalize_host(&mut url);
 
         let cleaning_mode = self.config.runtime.url_cleaning_mode()?;
         url_clean::clean_url(&mut url, &cleaning_mode)?;
@@ -164,6 +165,7 @@ impl Router {
         let raw_url = crate::input_url::normalize_input_url(raw_url)?;
         let mut url = Url::parse(&raw_url).with_context(|| format!("invalid URL: {raw_url}"))?;
         let input_url = url.to_string();
+        crate::input_url::normalize_host(&mut url);
 
         let cleaning_mode = self.config.runtime.url_cleaning_mode()?;
         url_clean::clean_url(&mut url, &cleaning_mode)?;

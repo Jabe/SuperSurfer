@@ -45,6 +45,22 @@ pub fn normalize_input_url(raw: &str) -> Result<String> {
     Ok(trimmed.to_string())
 }
 
+/// Strip a trailing root-label dot from the host (`github.com.` → `github.com`).
+/// DNS treats both as the same name, so a trailing dot must not bypass config
+/// matchers, URL-cleaner rules, or the preflight consent lookup.
+pub fn normalize_host(url: &mut Url) {
+    let Some(host) = url.host_str() else {
+        return;
+    };
+    if !host.ends_with('.') {
+        return;
+    }
+    let trimmed = host.trim_end_matches('.').to_string();
+    if !trimmed.is_empty() {
+        let _ = url.set_host(Some(&trimmed));
+    }
+}
+
 fn file_path_to_url(raw: &str) -> Result<Option<String>> {
     let expanded = expand_tilde(raw);
     let path = Path::new(&expanded);
@@ -111,6 +127,21 @@ mod tests {
         let normalized = normalize_input_url(file.to_str().unwrap()).unwrap();
         assert!(normalized.starts_with("file://"));
         let _ = std::fs::remove_file(file);
+    }
+
+    #[test]
+    fn normalize_host_strips_trailing_root_dot() {
+        let mut url = Url::parse("https://github.com./org/repo?x=1").unwrap();
+        normalize_host(&mut url);
+        assert_eq!(url.as_str(), "https://github.com/org/repo?x=1");
+
+        // Untouched cases: no trailing dot, no host at all, bare root dot.
+        let mut url = Url::parse("https://github.com/org").unwrap();
+        normalize_host(&mut url);
+        assert_eq!(url.as_str(), "https://github.com/org");
+        let mut url = Url::parse("file:///tmp/a.html").unwrap();
+        normalize_host(&mut url);
+        assert_eq!(url.as_str(), "file:///tmp/a.html");
     }
 
     #[test]
