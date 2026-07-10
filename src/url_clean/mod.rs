@@ -75,7 +75,7 @@ fn unwrap_once(url: &mut Url) -> bool {
 
     let host = url.host_str().unwrap_or_default().to_lowercase();
     for (suffix, params) in HOST_SUFFIX_RULES {
-        if host.ends_with(suffix) {
+        if host_matches_rule(&host, suffix) {
             if *suffix == ".protection.sophos.com" {
                 return unwrap_sophos(url);
             }
@@ -84,6 +84,20 @@ fn unwrap_once(url: &mut Url) -> bool {
     }
 
     false
+}
+
+/// Match a host against a rule on DNS label boundaries: a raw `ends_with`
+/// would let attacker-registered lookalikes such as `fake-slack-redir.net`
+/// trigger unwrapping. Rules starting with '.' match subdomains only; bare
+/// rules match the exact host or any subdomain of it.
+fn host_matches_rule(host: &str, rule: &str) -> bool {
+    if rule.starts_with('.') {
+        return host.ends_with(rule);
+    }
+    host == rule
+        || host
+            .strip_suffix(rule)
+            .is_some_and(|prefix| prefix.ends_with('.'))
 }
 
 fn is_teams_safelinks(url: &Url) -> bool {
@@ -343,6 +357,30 @@ mod tests {
             Url::parse("https://example.com/page?utm_source=x&sig=AbC%2Fd&q=a%20b").unwrap();
         strip_tracking_params(&mut url);
         assert_eq!(url.as_str(), "https://example.com/page?sig=AbC%2Fd&q=a%20b");
+    }
+
+    #[test]
+    fn lookalike_hosts_are_not_unwrapped() {
+        // Raw suffix matching would treat these attacker-registrable domains
+        // as known wrappers and rewrite the URL.
+        for wrapped in [
+            "https://fake-slack-redir.net/link?url=https%3A%2F%2Fevil.example%2F",
+            "https://fakeredirect-url.email/?link=https%3A%2F%2Fevil.example%2F",
+            "https://notsafelinks.protection.outlook.com.evil.example/?url=https%3A%2F%2Fevil.example%2F",
+            "https://evilsafelinks.protection.outlook.com/?url=https%3A%2F%2Fevil.example%2F",
+        ] {
+            assert_eq!(unwrap(wrapped), wrapped, "{wrapped} must not unwrap");
+        }
+    }
+
+    #[test]
+    fn subdomains_of_known_wrappers_still_unwrap() {
+        assert_eq!(
+            unwrap(
+                "https://eur03.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.org%2F"
+            ),
+            "https://example.org/"
+        );
     }
 
     #[test]
