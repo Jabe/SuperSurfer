@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub fn launch_browser(_registry: &BrowserRegistry, decision: &RouteDecision) -> Result<()> {
+    ensure_launchable_url(&decision.cleaned_url)?;
     #[cfg(target_os = "macos")]
     {
         let app_path = decision
@@ -43,6 +44,21 @@ pub fn launch_browser(_registry: &BrowserRegistry, decision: &RouteDecision) -> 
     {
         let _ = decision;
         anyhow::bail!("browser launch is not supported on this platform yet")
+    }
+}
+
+/// Final defense-in-depth gate before handing a URL to the browser: whatever
+/// routing, config rewrite rules, or URL cleaning produced, only ever launch
+/// web URLs and local files. Earlier layers already filter their own inputs,
+/// but a hostile rewrite returning e.g. `javascript:` must die here too.
+fn ensure_launchable_url(url: &str) -> Result<()> {
+    let parsed = url::Url::parse(url)
+        .map_err(|err| anyhow::anyhow!("refusing to launch unparseable URL {url:?}: {err}"))?;
+    match parsed.scheme() {
+        "http" | "https" | "file" => Ok(()),
+        other => anyhow::bail!(
+            "refusing to launch URL with scheme {other:?} (allowed: http, https, file): {url}"
+        ),
     }
 }
 
@@ -199,7 +215,7 @@ fn private_window_flag(browser_id: &str) -> Option<&'static str> {
     any(target_os = "macos", target_os = "windows", target_os = "linux")
 ))]
 mod tests {
-    use super::private_window_flag;
+    use super::{ensure_launchable_url, private_window_flag};
 
     #[test]
     fn private_flag_is_browser_specific() {
@@ -209,6 +225,28 @@ mod tests {
         assert_eq!(private_window_flag("firefox"), Some("--private-window"));
         // Safari has no CLI private flag — must not pass a bogus one.
         assert_eq!(private_window_flag("safari"), None);
+    }
+
+    #[test]
+    fn launch_gate_allows_web_and_file_urls() {
+        assert!(ensure_launchable_url("https://example.com/path?x=1").is_ok());
+        assert!(ensure_launchable_url("http://example.com/").is_ok());
+        assert!(ensure_launchable_url("file:///tmp/report.html").is_ok());
+    }
+
+    #[test]
+    fn launch_gate_rejects_dangerous_schemes() {
+        for url in [
+            "javascript:alert(1)",
+            "JAVASCRIPT:alert(1)", // Url::parse lowercases the scheme
+            "data:text/html,<script>alert(1)</script>",
+            "vbscript:msgbox(1)",
+            "chrome://settings",
+            "ms-msdt:/id PCWDiagnostic",
+            "not a url at all",
+        ] {
+            assert!(ensure_launchable_url(url).is_err(), "{url} must be refused");
+        }
     }
 }
 
