@@ -83,6 +83,7 @@ fn is_blocked_ipv4(ip: Ipv4Addr) -> bool {
         || o[0] == 0 // 0.0.0.0/8 "this network"
         || o[0] >= 240 // 240.0.0.0/4 reserved (includes broadcast)
         || (o[0] == 192 && o[1] == 0 && o[2] == 0) // 192.0.0.0/24 IETF protocol assignments
+        || (o[0] == 192 && o[1] == 88 && o[2] == 99) // 192.88.99.0/24 deprecated 6to4 relay
         || (o[0] == 198 && o[1] & 0xfe == 18) // 198.18.0.0/15 benchmarking
         // RFC 6598 CGNAT: 100.64.0.0/10
         || (o[0] == 100 && (64..128).contains(&o[1]))
@@ -117,6 +118,10 @@ fn is_blocked_ipv6(ip: Ipv6Addr) -> bool {
         || (seg[0] == 0x2001 && seg[1] == 0x0db8) // 2001:db8::/32 documentation
         || (seg[0] == 0x3fff && seg[1] & 0xf000 == 0) // 3fff::/20 documentation
         || seg[0] == 0x2002 // 2002::/16 deprecated 6to4 (embeds an IPv4 address)
+        // Outside the explicit NAT64 exception above, globally routable IPv6
+        // unicast is allocated from 2000::/3. Fail closed for discard-only,
+        // SRv6-local, reserved, and future special-purpose space.
+        || seg[0] & 0xe000 != 0x2000
 }
 
 #[cfg(test)]
@@ -181,6 +186,7 @@ mod tests {
         assert!(is_blocked_ipv4(Ipv4Addr::new(239, 255, 255, 250)));
         // 192.0.0.0/24 protocol assignments; documentation nets
         assert!(is_blocked_ipv4(Ipv4Addr::new(192, 0, 0, 8)));
+        assert!(is_blocked_ipv4(Ipv4Addr::new(192, 88, 99, 2)));
         assert!(is_blocked_ipv4(Ipv4Addr::new(192, 0, 2, 1)));
         assert!(is_blocked_ipv4(Ipv4Addr::new(198, 51, 100, 1)));
         assert!(is_blocked_ipv4(Ipv4Addr::new(203, 0, 113, 1)));
@@ -202,6 +208,10 @@ mod tests {
             "64:ff9b::7f00:1",     // NAT64 embedding 127.0.0.1
             "64:ff9b::a00:1",      // NAT64 embedding 10.0.0.1
             "64:ff9b:1::c0a8:101", // local-use NAT64
+            "100::1",              // discard-only
+            "100:0:0:1::1",        // dummy IPv6 prefix
+            "5f00::1",             // non-global SRv6 SID space
+            "4000::1",             // outside global unicast 2000::/3
         ];
         for addr in blocked {
             assert!(
@@ -212,6 +222,7 @@ mod tests {
         let allowed = [
             "2606:4700:4700::1111", // Cloudflare DNS — plainly public
             "2001:4860:4860::8888", // Google DNS — outside 2001::/23
+            "2620:4f:8000::1",      // globally reachable AS112 service
             "64:ff9b::808:808",     // NAT64 embedding public 8.8.8.8
         ];
         for addr in allowed {
