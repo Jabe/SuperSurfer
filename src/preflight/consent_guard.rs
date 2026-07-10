@@ -151,8 +151,8 @@ mod platform {
         Ok(())
     }
 
-    /// Reset `target` to: owner Administrators, no inheritance, Administrators
-    /// and SYSTEM full, Users limited to `users_grant`.
+    /// Set and verify: owner Administrators, no inheritance, Administrators and
+    /// SYSTEM full, Users limited to `users_grant`, and no other write grants.
     #[cfg(target_os = "windows")]
     fn harden_windows_acl(target: &Path, users_grant: &str) -> Result<()> {
         use std::process::Command;
@@ -185,6 +185,15 @@ mod platform {
                     target.display()
                 );
             }
+        }
+        let hardened = read_owner_dacl_sddl(target)
+            .map(|sddl| sddl_is_hardened(&sddl))
+            .unwrap_or(false);
+        if !hardened {
+            anyhow::bail!(
+                "{} still has an unsafe owner or ACL after icacls hardening",
+                target.display()
+            );
         }
         Ok(())
     }
@@ -224,12 +233,17 @@ mod platform {
         if !guarded.exists() {
             return Ok(ConsentProtection::Missing);
         }
-        // Existence alone is not enough: a user-writable ProgramData file must
-        // not count as a protected SSRF allowlist. Require a hardened owner and
-        // DACL, read as SDDL so the check is locale-independent (icacls prints
-        // localized account names, e.g. "VORDEFINIERT\Administratoren").
-        let hardened = read_owner_dacl_sddl(&guarded)
-            .map(|sddl| sddl_is_hardened(&sddl))
+        // Existence alone is not enough: a user-writable ProgramData file or
+        // parent directory must not count as a protected SSRF allowlist. Require
+        // hardened owner/DACL pairs, read as SDDL so the check is locale-independent
+        // (icacls prints localized names, e.g. "VORDEFINIERT\Administratoren").
+        let hardened = guarded
+            .parent()
+            .and_then(|parent| {
+                let file_sddl = read_owner_dacl_sddl(&guarded)?;
+                let parent_sddl = read_owner_dacl_sddl(parent)?;
+                Some(consent_sddls_are_hardened(&file_sddl, &parent_sddl))
+            })
             .unwrap_or(false);
         if hardened {
             Ok(ConsentProtection::Guarded)
@@ -301,6 +315,11 @@ mod platform {
     /// Fails closed: any unrecognized owner, ACE type, flag, or rights token
     /// counts as NOT hardened. The owner matters because a file's owner holds
     /// implicit WRITE_DAC and could re-grant themselves access at any time.
+    #[cfg(any(windows, test))]
+    pub(super) fn consent_sddls_are_hardened(file_sddl: &str, parent_sddl: &str) -> bool {
+        sddl_is_hardened(file_sddl) && sddl_is_hardened(parent_sddl)
+    }
+
     #[cfg(any(windows, test))]
     pub(super) fn sddl_is_hardened(sddl: &str) -> bool {
         let sddl = sddl.to_ascii_uppercase();
@@ -464,11 +483,12 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::platform::sddl_is_hardened;
+    use super::platform::{consent_sddls_are_hardened, sddl_is_hardened};
 
     // What save_guarded_consent_impl produces: Administrators owner, protected
     // DACL, Admins/SYSTEM full, Users read.
     const HARDENED: &str = "O:BAG:SYD:PAI(A;;FA;;;BA)(A;;FA;;;SY)(A;;FR;;;BU)";
+    const HARDENED_PARENT: &str = "O:BAG:SYD:PAI(A;;FA;;;BA)(A;;FA;;;SY)(A;OICI;0x1200a9;;;BU)";
 
     #[test]
     fn hardened_descriptor_is_accepted() {
@@ -480,6 +500,19 @@ mod tests {
         assert!(sddl_is_hardened("O:SYD:P(A;;FA;;;SY)"));
         // Lowercase output from a converter must parse the same way.
         assert!(sddl_is_hardened(&HARDENED.to_ascii_lowercase()));
+    }
+
+    #[test]
+    fn consent_requires_hardened_file_and_parent() {
+        assert!(consent_sddls_are_hardened(HARDENED, HARDENED_PARENT));
+        assert!(!consent_sddls_are_hardened(
+            HARDENED,
+            "O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;FA;;;S-1-5-21-1-2-3-1001)"
+        ));
+        assert!(!consent_sddls_are_hardened(
+            "O:BAD:P(A;;FA;;;BA)(A;;FA;;;SY)(A;;FW;;;BU)",
+            HARDENED_PARENT
+        ));
     }
 
     #[test]
