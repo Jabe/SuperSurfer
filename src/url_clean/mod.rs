@@ -49,6 +49,7 @@ fn unwrap_redirects(url: &mut Url) -> anyhow::Result<()> {
         if !unwrap_once(url) {
             break;
         }
+        crate::input_url::normalize_host(url);
         if url.to_string() == before {
             break;
         }
@@ -380,6 +381,16 @@ mod tests {
                 "https://eur03.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.org%2F"
             ),
             "https://example.org/"
+        );
+    }
+
+    #[test]
+    fn unwrap_normalizes_destination_root_dot() {
+        assert_eq!(
+            unwrap(
+                "https://safelinks.protection.outlook.com/?url=https%3A%2F%2Fcorp.example.com.%2Fdocs"
+            ),
+            "https://corp.example.com/docs"
         );
     }
 

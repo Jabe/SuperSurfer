@@ -168,7 +168,9 @@ impl ScriptRuntime {
             }
             Ok(())
         })?;
-        Ok(working.into_inner())
+        let mut prepared = working.into_inner();
+        crate::input_url::normalize_host(&mut prepared);
+        Ok(prepared)
     }
 
     pub fn should_resolve(&self, url: &Url, context: &RouteContext) -> Result<bool> {
@@ -743,6 +745,17 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
                 "https://example.com/"
             ),
             "https://elsewhere.test/"
+        );
+    }
+
+    #[test]
+    fn rewrite_normalizes_destination_root_dot() {
+        assert_eq!(
+            rewrite_url(
+                r#"return "https://corp.example.com./docs";"#,
+                "https://example.com/"
+            ),
+            "https://corp.example.com/docs"
         );
     }
 

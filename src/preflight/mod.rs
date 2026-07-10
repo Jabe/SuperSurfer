@@ -148,10 +148,11 @@ fn parse_redirect_target(base: &Url, status: u16, location: &str) -> Result<Url>
         anyhow::bail!("preflight expected redirect status, got {status}");
     }
 
-    let resolved = Url::parse(location)
+    let mut resolved = Url::parse(location)
         .or_else(|_| base.join(location))
         .with_context(|| format!("preflight redirect Location is not a valid URL: {location}"))?;
 
+    crate::input_url::normalize_host(&mut resolved);
     ssrf::ensure_redirect_target(&resolved)?;
     Ok(resolved)
 }
@@ -165,6 +166,14 @@ mod tests {
         let base = Url::parse("https://redirect.example.com/r/abc").unwrap();
         let resolved =
             parse_redirect_target(&base, 301, "https://example.com/final").expect("redirect");
+        assert_eq!(resolved.as_str(), "https://example.com/final");
+    }
+
+    #[test]
+    fn parse_redirect_target_normalizes_root_dot() {
+        let base = Url::parse("https://redirect.example.com/r/abc").unwrap();
+        let resolved =
+            parse_redirect_target(&base, 302, "https://example.com./final").expect("redirect");
         assert_eq!(resolved.as_str(), "https://example.com/final");
     }
 
