@@ -61,7 +61,7 @@ supersurfer logs
 /** @type {import('./supersurfer').RouterConfig} */
 export default {
   defaultBrowser: "chrome",
-  urlCleaning: "default",
+  urlCleaning: "route",
   handlers: [
     {
       match: domain("github.com"),
@@ -74,6 +74,8 @@ export default {
 ```
 
 Matcher helpers: `host`, `domain`, `suffix`, `glob`, `path`, `regex`, `all`, `not`, `processRunning`.
+
+`urlCleaning` decides how far built-in safelink unwrapping reaches: `"route"` (default) decodes for the matching decision but hands the browser the URL as it arrived, so the wrapper's link scanning stays intact; `"direct"` opens the decoded destination and skips the redirector; `"off"` disables decoding entirely. `rewrite` and `resolve` results always reach the browser regardless. `supersurfer test <url>` prints `routed:` and `opens:` separately.
 
 `processRunning(name)` returns whether a browser is running (e.g. `"edge"`, `"Microsoft Edge"`). The process list is snapshotted on the first call in each route, then reused for that link.
 

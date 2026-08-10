@@ -54,7 +54,20 @@ export interface RouterConfig {
   rewrite?: RewriteRule[];
   /** HTTP preflight rules for opaque short links. Requires `supersurfer resolve allow <host>`. */
   resolve?: ResolveRule[];
-  urlCleaning?: "off" | "default";
+  /**
+   * How built-in URL cleaning (safelink unwrapping, tracking-param stripping)
+   * affects routing and what the browser is opened with.
+   *
+   * - `"route"` (default): decode for the routing decision only; the browser
+   *   still receives the wrapper, so link scanning and revocation keep working.
+   * - `"direct"`: decode and open the destination directly, skipping the
+   *   redirector — and whatever checks it performs.
+   * - `"off"`: no decoding at all; matchers see raw safelinks.
+   *
+   * A `rewrite` rule or a `resolve` preflight overrides this and always reaches
+   * the browser.
+   */
+  urlCleaning?: "off" | "route" | "direct";
 }
 
 export function host(hostname: string): Matcher;

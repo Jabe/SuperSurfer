@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub fn launch_browser(_registry: &BrowserRegistry, decision: &RouteDecision) -> Result<()> {
-    ensure_launchable_url(&decision.cleaned_url)?;
+    ensure_launchable_url(&decision.launch_url)?;
     #[cfg(target_os = "macos")]
     {
         let app_path = decision
@@ -81,7 +81,7 @@ fn launch_linux(exec: &str, decision: &RouteDecision) -> Result<()> {
             cmd.arg(flag);
         }
     }
-    cmd.arg(&decision.cleaned_url);
+    cmd.arg(&decision.launch_url);
     cmd.status()
         .context("failed to launch browser")?
         .success()
@@ -116,7 +116,7 @@ fn launch_macos(app_path: &str, decision: &RouteDecision) -> Result<()> {
         Command::new("open")
             .arg("-a")
             .arg(app_path)
-            .arg(&decision.cleaned_url)
+            .arg(&decision.launch_url)
             .status()
     } else if is_chromium_browser(decision.browser_id.as_str())
         || is_gecko_browser(decision.browser_id.as_str())
@@ -124,10 +124,10 @@ fn launch_macos(app_path: &str, decision: &RouteDecision) -> Result<()> {
         let exe = macos_app_executable(app_path)?;
         Command::new(&exe)
             .args(&browser_args)
-            .arg(&decision.cleaned_url)
+            .arg(&decision.launch_url)
             .status()
     } else {
-        browser_args.push(decision.cleaned_url.clone());
+        browser_args.push(decision.launch_url.clone());
         Command::new("open")
             .arg("-a")
             .arg(app_path)
@@ -178,7 +178,7 @@ fn launch_windows(exe_path: &str, decision: &RouteDecision) -> Result<()> {
             cmd.arg(flag);
         }
     }
-    cmd.arg(browser_launch_arg(&decision.cleaned_url));
+    cmd.arg(browser_launch_arg(&decision.launch_url));
     cmd.status()
         .context("failed to launch browser")?
         .success()

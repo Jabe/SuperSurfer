@@ -322,7 +322,8 @@ fn cmd_test(url: &str, opener: Option<&str>, open: bool) -> Result<()> {
 
     let decision = router.route_and_launch(url, &context, !open)?;
     println!("input:    {}", decision.input_url);
-    println!("cleaned:  {}", decision.cleaned_url);
+    println!("routed:   {}", decision.routed_url);
+    println!("opens:    {}", decision.launch_url);
     println!("browser:  {}", decision.browser);
     if let Some(profile) = &decision.profile {
         println!("profile:  {profile}");

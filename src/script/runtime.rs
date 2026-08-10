@@ -16,6 +16,11 @@ const EVAL_TIMEOUT: Duration = Duration::from_millis(250);
 const EVAL_MEMORY_LIMIT: usize = 32 * 1024 * 1024;
 const EVAL_STACK_LIMIT: usize = 512 * 1024;
 
+/// Decode for the routing decision, but hand the browser the URL as it arrived.
+/// Unwrapping into the browser is opt-in (`direct`) because it bypasses whatever
+/// the wrapper does for the user's organisation — link scanning, revocation.
+pub const DEFAULT_CLEANING_MODE: &str = "route";
+
 static GLOB_MATCHERS: LazyLock<Mutex<HashMap<String, GlobMatcher>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -119,9 +124,9 @@ impl ScriptRuntime {
     pub fn url_cleaning_mode(&self) -> Result<String> {
         self.ctx.with(|ctx| {
             let config: Object = ctx.globals().get("__SUPERSURFER_CONFIG__")?;
-            // urlCleaning may be a string ("off" | "default") or, per the type
-            // declaration, a custom-rules array. Custom rules are not yet
-            // implemented; fall back to "default" and warn so the user isn't
+            // urlCleaning may be a string ("off" | "route" | "direct") or, per the
+            // type declaration, a custom-rules array. Custom rules are not yet
+            // implemented; fall back to "route" and warn so the user isn't
             // silently misled into thinking their rules are applied.
             //
             // Inspect the raw value rather than coercing to String: a String
@@ -130,24 +135,31 @@ impl ScriptRuntime {
             // warning for exactly the array case we want to catch.
             let value: Value = config.get("urlCleaning")?;
             if value.is_undefined() || value.is_null() {
-                return Ok("default".to_string());
+                return Ok(DEFAULT_CLEANING_MODE.to_string());
             }
             if let Some(s) = value.as_string() {
                 let mode = s.to_string()?;
-                if mode == "off" || mode == "default" {
+                // "default" predates the named modes and meant "the normal
+                // behaviour", which is now `route`.
+                if mode == "default" {
+                    return Ok(DEFAULT_CLEANING_MODE.to_string());
+                }
+                if matches!(mode.as_str(), "off" | "route" | "direct") {
                     return Ok(mode);
                 }
                 eprintln!(
-                    "urlCleaning: unsupported value {mode:?} (expected \"off\" or \"default\"). \
-                     Custom rule arrays are not yet implemented; falling back to \"default\"."
+                    "urlCleaning: unsupported value {mode:?} (expected \"off\", \"route\" or \
+                     \"direct\"). Custom rule arrays are not yet implemented; falling back to \
+                     \"{DEFAULT_CLEANING_MODE}\"."
                 );
-                return Ok("default".to_string());
+                return Ok(DEFAULT_CLEANING_MODE.to_string());
             }
             eprintln!(
-                "urlCleaning: unsupported value (expected the string \"off\" or \"default\"). \
-                 Custom rule arrays are not yet implemented; falling back to \"default\"."
+                "urlCleaning: unsupported value (expected the string \"off\", \"route\" or \
+                 \"direct\"). Custom rule arrays are not yet implemented; falling back to \
+                 \"{DEFAULT_CLEANING_MODE}\"."
             );
-            Ok("default".to_string())
+            Ok(DEFAULT_CLEANING_MODE.to_string())
         })
     }
 
@@ -1044,7 +1056,7 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
     }
 
     #[test]
-    fn url_cleaning_defaults_to_default_when_absent() {
+    fn url_cleaning_defaults_to_route_when_absent() {
         let js = format!(
             r#"{}{}
 globalThis.__SUPERSURFER_CONFIG__ = {{ defaultBrowser: "chrome", handlers: [] }};"#,
@@ -1052,7 +1064,7 @@ globalThis.__SUPERSURFER_CONFIG__ = {{ defaultBrowser: "chrome", handlers: [] }}
             ""
         );
         let rt = ScriptRuntime::from_js(&js).unwrap();
-        assert_eq!(rt.url_cleaning_mode().unwrap(), "default");
+        assert_eq!(rt.url_cleaning_mode().unwrap(), "route");
     }
 
     #[test]
@@ -1062,26 +1074,43 @@ globalThis.__SUPERSURFER_CONFIG__ = {{ defaultBrowser: "chrome", handlers: [] }}
     }
 
     #[test]
-    fn url_cleaning_default_is_respected() {
-        let rt = runtime_with_url_cleaning("\"default\"");
-        assert_eq!(rt.url_cleaning_mode().unwrap(), "default");
+    fn url_cleaning_route_and_direct_are_respected() {
+        assert_eq!(
+            runtime_with_url_cleaning("\"route\"")
+                .url_cleaning_mode()
+                .unwrap(),
+            "route"
+        );
+        assert_eq!(
+            runtime_with_url_cleaning("\"direct\"")
+                .url_cleaning_mode()
+                .unwrap(),
+            "direct"
+        );
     }
 
     #[test]
-    fn url_cleaning_unsupported_value_falls_back_to_default() {
+    fn url_cleaning_legacy_default_maps_to_route() {
+        // "default" predates the named modes and meant "the normal behaviour".
+        let rt = runtime_with_url_cleaning("\"default\"");
+        assert_eq!(rt.url_cleaning_mode().unwrap(), "route");
+    }
+
+    #[test]
+    fn url_cleaning_unsupported_value_falls_back_to_route() {
         // Custom rule arrays are typed but not yet implemented; the runtime
         // must not silently honor an unsupported value, and must not panic.
         let rt = runtime_with_url_cleaning("\"aggressive\"");
-        assert_eq!(rt.url_cleaning_mode().unwrap(), "default");
+        assert_eq!(rt.url_cleaning_mode().unwrap(), "route");
     }
 
     #[test]
-    fn url_cleaning_custom_rule_array_falls_back_to_default() {
+    fn url_cleaning_custom_rule_array_falls_back_to_route() {
         // The motivating case: a custom-rule array is typed but unimplemented.
-        // A non-string value must not slip through as a silent "default" via a
+        // A non-string value must not slip through as a silent default via a
         // failed String coercion -- it must be detected and fall back.
         let rt = runtime_with_url_cleaning("[{ host: \"example.com\" }]");
-        assert_eq!(rt.url_cleaning_mode().unwrap(), "default");
+        assert_eq!(rt.url_cleaning_mode().unwrap(), "route");
     }
 
     #[test]

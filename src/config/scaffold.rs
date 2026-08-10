@@ -32,7 +32,7 @@ pub fn render(plan: &ScaffoldPlan) -> String {
         r#"/** @type {{import('./supersurfer').RouterConfig}} */
 export default {{
   defaultBrowser: "{default}",
-  urlCleaning: "default",
+  urlCleaning: "route",
   handlers: [],
 }};
 "#,

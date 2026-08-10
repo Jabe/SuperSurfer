@@ -39,7 +39,11 @@ pub struct PreflightProbe {
 #[derive(Debug, Clone)]
 pub struct RouteDecision {
     pub input_url: String,
-    pub cleaned_url: String,
+    /// URL the handlers matched against — decoded unless cleaning is `off`.
+    pub routed_url: String,
+    /// URL actually handed to the browser. Equal to `routed_url` except in
+    /// `route` mode, where the wrapper is deliberately left intact.
+    pub launch_url: String,
     pub browser_id: String,
     pub browser: String,
     pub profile: Option<String>,
@@ -48,6 +52,25 @@ pub struct RouteDecision {
     pub matched_handler: bool,
     pub fallback: bool,
     pub app_path: Option<String>,
+}
+
+impl RouteDecision {
+    /// One-line summary for the decision log and the launcher trace. The routed
+    /// URL is named separately only when it differs from what was opened, so
+    /// `route` mode stays debuggable without adding noise to the other modes.
+    pub fn log_line(&self) -> String {
+        if self.routed_url == self.launch_url {
+            format!(
+                "{} -> {} ({})",
+                self.input_url, self.launch_url, self.browser
+            )
+        } else {
+            format!(
+                "{} -> {} [matched as {}] ({})",
+                self.input_url, self.launch_url, self.routed_url, self.browser
+            )
+        }
+    }
 }
 
 pub struct Router {
@@ -78,15 +101,18 @@ impl Router {
         crate::input_url::normalize_host(&mut url);
 
         let cleaning_mode = self.config.runtime.url_cleaning_mode()?;
-        url_clean::clean_url(&mut url, &cleaning_mode)?;
+        let cleaned = url_clean::clean_url(&url, &cleaning_mode);
 
-        let (target, routed_url, script_fallback) = match self.route_script(&url, context) {
-            Ok(result) => result,
-            Err(err) => {
-                eprintln!("routing script error: {err}. Falling back to defaultBrowser.");
-                (None, url.clone(), true)
-            }
-        };
+        let (target, routed_url, script_fallback) =
+            match self.route_script(&cleaned.routed, context) {
+                Ok(result) => result,
+                Err(err) => {
+                    eprintln!("routing script error: {err}. Falling back to defaultBrowser.");
+                    (None, cleaned.routed.clone(), true)
+                }
+            };
+
+        let launch_url = pick_launch_url(&cleaned, &routed_url);
 
         let target = match target {
             Some(t) if t.name.is_some() => t,
@@ -112,7 +138,8 @@ impl Router {
 
         let decision = RouteDecision {
             input_url,
-            cleaned_url: routed_url.to_string(),
+            routed_url: routed_url.to_string(),
+            launch_url: launch_url.to_string(),
             browser_id,
             browser,
             profile,
@@ -124,10 +151,7 @@ impl Router {
         };
 
         // Never gate browser launch on log I/O (permissions, full disk, etc.).
-        if let Err(err) = logging::append_decision(&format!(
-            "{} -> {} ({})",
-            decision.input_url, decision.cleaned_url, decision.browser
-        )) {
+        if let Err(err) = logging::append_decision(&decision.log_line()) {
             eprintln!("warning: failed to append decision log: {err}");
         }
 
@@ -168,9 +192,9 @@ impl Router {
         crate::input_url::normalize_host(&mut url);
 
         let cleaning_mode = self.config.runtime.url_cleaning_mode()?;
-        url_clean::clean_url(&mut url, &cleaning_mode)?;
+        let cleaned = url_clean::clean_url(&url, &cleaning_mode);
 
-        let prepared = self.config.runtime.prepare_url(&url, context)?;
+        let prepared = self.config.runtime.prepare_url(&cleaned.routed, context)?;
         let host = prepared.host_str().unwrap_or_default().to_string();
         let config_matched = self.config.runtime.should_resolve(&prepared, context)?;
         let host_consented = preflight::is_allowed(&host)?;
@@ -307,6 +331,20 @@ impl Router {
     }
 }
 
+/// Decide which URL the browser gets.
+///
+/// Cleaning already picked one (in `route` mode deliberately the untouched
+/// wrapper), but a `rewrite` rule or a preflight resolve may have transformed the
+/// URL afterwards. Those are explicit user intent, so they win — otherwise both
+/// features would be silently inert whenever cleaning wanted to keep the original.
+fn pick_launch_url(cleaned: &url_clean::CleanOutcome, routed: &Url) -> Url {
+    if *routed == cleaned.routed {
+        cleaned.launch.clone()
+    } else {
+        routed.clone()
+    }
+}
+
 fn parse_browser_spec(spec: &str) -> (String, Option<String>) {
     if let Some((browser, profile)) = spec.split_once(':') {
         (
@@ -318,5 +356,69 @@ fn parse_browser_spec(spec: &str) -> (String, Option<String>) {
             crate::browser::registry::normalize_browser_id(spec).to_string(),
             None,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WRAPPER: &str =
+        "https://safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.org%2Fpage&sdata=sig";
+
+    fn route_outcome() -> url_clean::CleanOutcome {
+        url_clean::clean_url(&Url::parse(WRAPPER).unwrap(), "route")
+    }
+
+    #[test]
+    fn untouched_route_keeps_the_wrapper_for_the_browser() {
+        let cleaned = route_outcome();
+        let routed = cleaned.routed.clone();
+        assert_eq!(pick_launch_url(&cleaned, &routed).as_str(), WRAPPER);
+    }
+
+    #[test]
+    fn rewrite_result_overrides_the_preserved_wrapper() {
+        // A rewrite rule moved the URL somewhere else; launching the original
+        // wrapper anyway would make `rewrite` a no-op under `route`.
+        let cleaned = route_outcome();
+        let rewritten = Url::parse("https://intranet.example/page").unwrap();
+        assert_eq!(
+            pick_launch_url(&cleaned, &rewritten).as_str(),
+            "https://intranet.example/page"
+        );
+    }
+
+    #[test]
+    fn direct_mode_launches_what_it_routed() {
+        let cleaned = url_clean::clean_url(&Url::parse(WRAPPER).unwrap(), "direct");
+        let routed = cleaned.routed.clone();
+        assert_eq!(
+            pick_launch_url(&cleaned, &routed).as_str(),
+            "https://example.org/page"
+        );
+    }
+
+    #[test]
+    fn log_line_names_the_routed_url_only_when_it_differs() {
+        let mut decision = RouteDecision {
+            input_url: WRAPPER.to_string(),
+            routed_url: "https://example.org/page".to_string(),
+            launch_url: WRAPPER.to_string(),
+            browser_id: "brave".to_string(),
+            browser: "Brave Browser".to_string(),
+            profile: None,
+            profile_directory: None,
+            private: false,
+            matched_handler: true,
+            fallback: false,
+            app_path: None,
+        };
+        assert!(decision
+            .log_line()
+            .contains("[matched as https://example.org/page]"));
+
+        decision.launch_url = decision.routed_url.clone();
+        assert!(!decision.log_line().contains("[matched as"));
     }
 }

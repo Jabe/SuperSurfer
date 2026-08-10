@@ -49,7 +49,7 @@ Config lives at:
 /** @type {import('./supersurfer').RouterConfig} */
 export default {
   defaultBrowser: "chrome",
-  urlCleaning: "default",
+  urlCleaning: "route",
   handlers: [
     {
       match: domain("github.com"),
@@ -63,13 +63,31 @@ export default {
 
 `processRunning("edge")` checks whether a browser (by id, display name, or process name) is running — snapshot on first call per route, then cached for that evaluation.
 
+## URL cleaning
+
+Built-in rules unwrap redirect wrappers (Outlook/Teams safelinks, Azure Communication Services, Google, Slack, Facebook, LinkedIn, Trend Micro, Barracuda, Sophos) and strip tracking parameters (`utm_*`, `fbclid`, `gclid`, …). `urlCleaning` controls how far that reaches:
+
+| Mode | Handlers match on | Browser opens |
+|---|---|---|
+| `"route"` *(default)* | the decoded destination | the URL as it arrived |
+| `"direct"` | the decoded destination | the decoded destination |
+| `"off"` | the raw URL | the raw URL |
+
+`route` is the default because it separates two concerns that are easy to conflate. Your handlers get to see that a mailed safelink really points at `github.com` and route it accordingly — while the wrapper still reaches the browser, so link scanning, revocation and click reporting your organisation may depend on keep working.
+
+Pick `direct` to skip the redirector entirely: one HTTP round-trip less and no click reported, at the cost of whatever checks that redirector performs. Pick `off` only if matchers should see raw safelinks, e.g. because you route on the wrapper itself.
+
+Two things are independent of the mode: a `rewrite` rule or a `resolve` preflight is explicit intent, so its result always reaches the browser; and `file:` URLs are never touched.
+
+`supersurfer test <url>` prints `routed:` and `opens:` separately, which is the quickest way to see a mode in action.
+
 ## From Finicky
 
 There is no built-in migrate command. SuperSurfer already supports most Finicky config patterns (`{ name, profile }` browser targets, dynamic `browser` handlers, `rewrite` rules). Copy your `~/.finicky.js` into `config.js`, add a `/** @type {import('./supersurfer').RouterConfig} */` comment above `export default`, then adjust:
 
 - `finicky.matchHostnames([...])` → a local `matchHostnames()` helper, or `host` / `suffix` / `regex` matchers
 - `finicky.opener` → `ctx.opener`
-- custom `rewrite` + built-in URL cleaning may overlap — set `urlCleaning: "off"` if needed
+- custom `rewrite` + built-in URL cleaning may overlap — the built-in rules cover Outlook/Teams safelinks, Google, Slack, LinkedIn and more, so the equivalent `rewrite` rules can usually just go
 
 An LLM plus `supersurfer.d.ts` (written by `supersurfer init`) is the intended migration path. Validate with `supersurfer doctor` and `supersurfer test <url>`.
 
@@ -170,7 +188,7 @@ This is an initial implementation of the browser router spec:
 - Rust core with QuickJS sandboxed config runtime
 - JavaScript config with JSDoc types
 - Matcher helpers (`host`, `domain`, `suffix`, `glob`, `path`, `regex`, `all`, `not`, `processRunning`)
-- Built-in URL cleaning (Outlook safelinks, Google redirects, UTM stripping)
+- Built-in URL cleaning with `route` / `direct` / `off` modes (safelink unwrapping, UTM stripping)
 - macOS `SuperSurfer.app` bundle + Launch Services / duti registration
 - Windows `supersurfer.exe` + registry browser registration
 - Linux `supersurfer` binary + `.desktop` / xdg-settings registration

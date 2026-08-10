@@ -147,9 +147,6 @@ pub fn handle_url_arg(url: &str, opener: Option<Opener>) -> anyhow::Result<()> {
         context.opener = detect_opener();
     }
     let decision = router.route_and_launch(url, &context, false)?;
-    eprintln!(
-        "routed {} -> {} via {}",
-        decision.input_url, decision.cleaned_url, decision.browser
-    );
+    eprintln!("routed {}", decision.log_line());
     Ok(())
 }

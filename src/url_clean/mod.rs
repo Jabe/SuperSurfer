@@ -30,21 +30,60 @@ const HOST_SUFFIX_RULES: &[(&str, &[&str])] = &[
 
 const MAX_UNWRAP_DEPTH: usize = 8;
 
-pub fn clean_url(url: &mut Url, mode: &str) -> anyhow::Result<()> {
-    if url.scheme() == "file" {
-        return Ok(());
-    }
-    match mode {
-        "off" => return Ok(()),
-        _ => {
-            unwrap_redirects(url)?;
-            strip_tracking_params(url);
-        }
-    }
-    Ok(())
+/// The two URLs a cleaning pass produces. They differ only in `route` mode,
+/// which is the whole point of that mode: match on the real destination while
+/// still handing the untouched wrapper to the browser.
+#[derive(Debug, Clone)]
+pub struct CleanOutcome {
+    /// What handlers, `rewrite` rules and `resolve` matchers see.
+    pub routed: Url,
+    /// What the browser is ultimately launched with.
+    pub launch: Url,
 }
 
-fn unwrap_redirects(url: &mut Url) -> anyhow::Result<()> {
+impl CleanOutcome {
+    fn unchanged(url: &Url) -> Self {
+        Self {
+            routed: url.clone(),
+            launch: url.clone(),
+        }
+    }
+}
+
+pub fn clean_url(url: &Url, mode: &str) -> CleanOutcome {
+    if url.scheme() == "file" || mode == "off" {
+        return CleanOutcome::unchanged(url);
+    }
+
+    let mut routed = url.clone();
+    let unwrapped = unwrap_redirects(&mut routed);
+    strip_tracking_params(&mut routed);
+
+    if mode == "direct" {
+        return CleanOutcome {
+            launch: routed.clone(),
+            routed,
+        };
+    }
+
+    // `route` (the default): decode for the decision only, so the wrapper keeps
+    // doing its job — link scanning, revocation, click telemetry the user's org
+    // may rely on. A wrapper's query is signature-bound (Outlook's `sdata` is an
+    // HMAC over the other params), so it must reach the browser byte-for-byte.
+    // Only when nothing was unwrapped is there a plain URL left to strip.
+    let launch = if unwrapped {
+        url.clone()
+    } else {
+        let mut launch = url.clone();
+        strip_tracking_params(&mut launch);
+        launch
+    };
+    CleanOutcome { routed, launch }
+}
+
+/// Returns whether any wrapper layer was unwrapped.
+fn unwrap_redirects(url: &mut Url) -> bool {
+    let mut unwrapped = false;
     for _ in 0..MAX_UNWRAP_DEPTH {
         let before = url.to_string();
         if !unwrap_once(url) {
@@ -54,8 +93,9 @@ fn unwrap_redirects(url: &mut Url) -> anyhow::Result<()> {
         if url.to_string() == before {
             break;
         }
+        unwrapped = true;
     }
-    Ok(())
+    unwrapped
 }
 
 fn unwrap_once(url: &mut Url) -> bool {
@@ -228,8 +268,13 @@ mod tests {
 
     fn unwrap(input: &str) -> String {
         let mut url = Url::parse(input).unwrap();
-        unwrap_redirects(&mut url).unwrap();
+        unwrap_redirects(&mut url);
         url.to_string()
+    }
+
+    fn clean(input: &str, mode: &str) -> (String, String) {
+        let outcome = clean_url(&Url::parse(input).unwrap(), mode);
+        (outcome.routed.to_string(), outcome.launch.to_string())
     }
 
     #[test]
@@ -421,5 +466,53 @@ mod tests {
             unwrap("https://redirect-url.email/?link=https%3A%2F%2Fexample.com%2Fmail%2Fview%3Fmodel%3Daccount.move%26res_id%3D556798&apn=com.example.mobile"),
             "https://example.com/mail/view?model=account.move&res_id=556798"
         );
+    }
+
+    const WRAPPED: &str =
+        "https://safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.org%2Fpage&sdata=sig";
+
+    #[test]
+    fn off_mode_decodes_nothing() {
+        let (routed, launch) = clean("https://example.com/p?utm_source=x&ok=1", "off");
+        assert_eq!(routed, "https://example.com/p?utm_source=x&ok=1");
+        assert_eq!(launch, routed);
+
+        let (routed, launch) = clean(WRAPPED, "off");
+        assert_eq!(routed, WRAPPED);
+        assert_eq!(launch, WRAPPED);
+    }
+
+    #[test]
+    fn route_mode_decodes_for_matching_but_launches_the_wrapper() {
+        let (routed, launch) = clean(WRAPPED, "route");
+        assert_eq!(routed, "https://example.org/page");
+        // Byte-for-byte: `sdata` is an HMAC over the other params, so stripping
+        // or re-encoding anything here would invalidate the wrapper.
+        assert_eq!(launch, WRAPPED);
+    }
+
+    #[test]
+    fn route_mode_still_strips_tracking_from_unwrapped_urls() {
+        // Nothing to preserve when there is no wrapper, so the launched URL
+        // loses its tracking params just like in `direct`.
+        let (routed, launch) = clean("https://example.com/p?utm_source=x&ok=1", "route");
+        assert_eq!(routed, "https://example.com/p?ok=1");
+        assert_eq!(launch, "https://example.com/p?ok=1");
+    }
+
+    #[test]
+    fn direct_mode_launches_the_decoded_destination() {
+        let (routed, launch) = clean(WRAPPED, "direct");
+        assert_eq!(routed, "https://example.org/page");
+        assert_eq!(launch, "https://example.org/page");
+    }
+
+    #[test]
+    fn file_urls_are_untouched_in_every_mode() {
+        for mode in ["off", "route", "direct"] {
+            let (routed, launch) = clean("file:///tmp/a.html", mode);
+            assert_eq!(routed, "file:///tmp/a.html", "mode {mode}");
+            assert_eq!(launch, "file:///tmp/a.html", "mode {mode}");
+        }
     }
 }
