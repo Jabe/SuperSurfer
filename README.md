@@ -79,6 +79,8 @@ Pick `direct` to skip the redirector entirely: one HTTP round-trip less and no c
 
 A `rewrite` rule or a `resolve` preflight always reaches the browser — both are deliberate moves, not something cleaning should undo. A *resolved* destination is cleaned first, though: whatever sits at the end of a redirect chain is unknown and may be a wrapper itself, so it gets the same treatment as the original input. `rewrite` results are left alone, since those are yours. `file:` URLs are never touched in any mode.
 
+Worth knowing under `route`: allowing a host with `supersurfer resolve allow` gives up wrapper preservation **for that host**. The HEAD request has already been made and the destination is known, so re-opening the redirector would only repeat work you deliberately paid for. If you chose `route` specifically to keep a scanner in the loop, keep that host off the resolve allowlist.
+
 `supersurfer test <url>` prints `routed:` and `opens:` separately, which is the quickest way to see a mode in action.
 
 ## From Finicky
