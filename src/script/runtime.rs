@@ -771,6 +771,46 @@ globalThis.__SUPERSURFER_CONFIG__ = {{
     }
 
     #[test]
+    fn rewrite_urlsearchparams_keeps_nested_query_of_wrapped_url() {
+        // The wrapped destination carries its own `&`-separated query. Serializing
+        // `u.search` without encoding would spill those separators into the outer
+        // query, and `get("url")` would return only the part before the first `&`.
+        assert_eq!(
+            rewrite_url(
+                r#"return new URLSearchParams(u.search).get("url") || u.href;"#,
+                "https://wrapper.example/?url=https%3A%2F%2Fexample.com%2Fmail%3Fmodel%3Daccount.move%26res_id%3D556798&apn=com.example.mobile"
+            ),
+            "https://example.com/mail?model=account.move&res_id=556798"
+        );
+    }
+
+    #[test]
+    fn rewrite_search_round_trip_is_lossless() {
+        // `u.search` reads through toString() and writes back through __parseQuery,
+        // so assigning it to itself must be a no-op even when a value contains the
+        // `&`/`=` separators and a literal `+`.
+        assert_eq!(
+            rewrite_url(
+                r#"u.search = u.search;"#,
+                "https://example.com/?wrapped=https%3A%2F%2Fx.test%2F%3Fa%3D1%26b%3D2&q=a%20b&sig=x%2By"
+            ),
+            "https://example.com/?wrapped=https%3A%2F%2Fx.test%2F%3Fa%3D1%26b%3D2&q=a+b&sig=x%2By"
+        );
+    }
+
+    #[test]
+    fn rewrite_tolerates_malformed_percent_escapes() {
+        // A stray `%` makes decodeURIComponent throw; the rule must still run.
+        assert_eq!(
+            rewrite_url(
+                r#"u.searchParams.delete("drop");"#,
+                "https://example.com/?bad=%zz&drop=1"
+            ),
+            "https://example.com/?bad=%25zz"
+        );
+    }
+
+    #[test]
     fn resolve_rules_are_evaluated_without_network() {
         let js = format!(
             r#"{}{}

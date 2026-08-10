@@ -107,7 +107,30 @@ class URLSearchParams {
     for (const pair of this._pairs) cb(pair[1], pair[0], this);
   }
   toString() {
-    return this._pairs.map((p) => p[0] + "=" + p[1]).join("&");
+    return this._pairs
+      .map((p) => __formEncode(p[0]) + "=" + __formEncode(p[1]))
+      .join("&");
+  }
+}
+
+// `_pairs` always holds *decoded* values: the Rust side builds them from
+// `query_pairs()` and reads them back through `append_pair`. Serializing and
+// parsing must therefore encode and decode in step, or any value containing
+// `&` or `=` — i.e. every wrapped URL — splits into extra parameters on the
+// `url.search` -> `new URLSearchParams(...)` round-trip that `rewrite` rules use.
+function __formEncode(value) {
+  return encodeURIComponent(String(value)).replace(/%20/g, "+");
+}
+
+function __formDecode(value) {
+  // '+' means space only before percent-decoding, so an encoded %2B survives.
+  const spaced = String(value).replace(/\+/g, " ");
+  try {
+    return decodeURIComponent(spaced);
+  } catch (err) {
+    // Malformed escapes (`%zz`, a trailing `%`) must not kill the rewrite rule;
+    // leave them as-is, like the WHATWG parser does.
+    return spaced;
   }
 }
 
@@ -117,7 +140,9 @@ function __parseQuery(search) {
   if (!s) return [];
   return s.split("&").map((seg) => {
     const i = seg.indexOf("=");
-    return i === -1 ? [seg, ""] : [seg.slice(0, i), seg.slice(i + 1)];
+    return i === -1
+      ? [__formDecode(seg), ""]
+      : [__formDecode(seg.slice(0, i)), __formDecode(seg.slice(i + 1))];
   });
 }
 
