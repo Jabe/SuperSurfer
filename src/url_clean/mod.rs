@@ -20,6 +20,7 @@ static TRACKING_PARAMS: &[&str] = &[
 /// Host suffix → query params to try in order.
 const HOST_SUFFIX_RULES: &[(&str, &[&str])] = &[
     ("safelinks.protection.outlook.com", &["url"]),
+    ("safelink.emails.azure.net", &["destination"]),
     ("slack-redir.net", &["url"]),
     (".check.trendmicro.com", &["url"]),
     ("linkprotect.cudasvc.com", &["a"]),
@@ -398,5 +399,27 @@ mod tests {
     fn chains_nested_wrappers() {
         let wrapped = "https://safelinks.protection.outlook.com/?url=https%3A%2F%2Fslack-redir.net%2Flink%3Furl%3Dhttps%253A%252F%252Fexample.com";
         assert_eq!(unwrap(wrapped), "https://example.com/");
+    }
+
+    /// Real-world shape (sanitized): Outlook ATP wrapping an Azure Communication
+    /// Services redirect. Both layers must unwrap, and neither the outer
+    /// `data`/`sdata` blob nor the inner `p` tracking payload may survive.
+    #[test]
+    fn unwraps_outlook_wrapped_azure_acs_redirect() {
+        assert_eq!(
+            unwrap("https://deu01.safelinks.protection.outlook.com/?url=https%3A%2F%2Feur.safelink.emails.azure.net%2Fredirect%2F%3Fdestination%3Dhttps%253A%252F%252Fgo.microsoft.com%252Ffwlink%252F%253FLinkId%253D521839%26p%3DbT10ZXN0JnU9eA%253D%253D&data=05%7C02%7C&sdata=REDACTED&reserved=0"),
+            "https://go.microsoft.com/fwlink/?LinkId=521839"
+        );
+    }
+
+    /// A destination carrying its own `&`-separated query must arrive complete.
+    /// Splitting the decoded wrapper param on `&` again would truncate it at the
+    /// first separator and silently drop `res_id`.
+    #[test]
+    fn preserves_nested_query_of_unwrapped_destination() {
+        assert_eq!(
+            unwrap("https://redirect-url.email/?link=https%3A%2F%2Fexample.com%2Fmail%2Fview%3Fmodel%3Daccount.move%26res_id%3D556798&apn=com.example.mobile"),
+            "https://example.com/mail/view?model=account.move&res_id=556798"
+        );
     }
 }
