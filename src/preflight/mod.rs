@@ -109,6 +109,12 @@ fn preflight_agent() -> Agent {
     let config = Agent::config_builder()
         .timeout_global(Some(TIMEOUT))
         .user_agent(USER_AGENT)
+        // Read the Location header ourselves rather than follow the chain. Every
+        // further hop is a request the *destination* decides on, so following N of
+        // them hands a hostile target N requests and up to N * TIMEOUT of latency
+        // before the browser opens at all. Stopping after one keeps the worst case
+        // fixed and knowable. Contrast `MAX_UNWRAP_DEPTH`, which may be generous
+        // precisely because its layers cost no I/O and no remote say.
         .max_redirects(0)
         .build();
     Agent::with_parts(

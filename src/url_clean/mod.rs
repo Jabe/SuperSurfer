@@ -28,6 +28,11 @@ const HOST_SUFFIX_RULES: &[(&str, &[&str])] = &[
     ("redirect-url.email", &["link"]),
 ];
 
+/// Wrappers nest in practice (Outlook around Azure ACS around a shortener), and
+/// every layer is already sitting in the URL we were handed: unwrapping costs no
+/// I/O and follows nothing the destination controls. The limit therefore only has
+/// to stop a self-referential loop, not ration a scarce resource — which is why
+/// it can be this generous where `preflight_agent` allows exactly one hop.
 const MAX_UNWRAP_DEPTH: usize = 8;
 
 /// The two URLs a cleaning pass produces. They differ only in `route` mode,
