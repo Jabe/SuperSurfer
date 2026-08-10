@@ -77,7 +77,7 @@ Built-in rules unwrap redirect wrappers (Outlook/Teams safelinks, Azure Communic
 
 Pick `direct` to skip the redirector entirely: one HTTP round-trip less and no click reported, at the cost of whatever checks that redirector performs. Pick `off` only if matchers should see raw safelinks, e.g. because you route on the wrapper itself.
 
-Two things are independent of the mode: a `rewrite` rule or a `resolve` preflight is explicit intent, so its result always reaches the browser; and `file:` URLs are never touched.
+A `rewrite` rule or a `resolve` preflight always reaches the browser — both are deliberate moves, not something cleaning should undo. A *resolved* destination is cleaned first, though: whatever sits at the end of a redirect chain is unknown and may be a wrapper itself, so it gets the same treatment as the original input. `rewrite` results are left alone, since those are yours. `file:` URLs are never touched in any mode.
 
 `supersurfer test <url>` prints `routed:` and `opens:` separately, which is the quickest way to see a mode in action.
 

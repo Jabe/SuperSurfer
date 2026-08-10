@@ -29,6 +29,9 @@ pub struct PreflightProbe {
     pub config_matched: bool,
     pub host_consented: bool,
     pub resolved_url: Option<String>,
+    /// The resolved URL after cleaning — what handlers actually matched on.
+    /// Only set when it differs from `resolved_url`.
+    pub routed_url: Option<String>,
     pub preflight_error: Option<String>,
     /// Wall time for the HTTP HEAD lookup when config and consent allowed it.
     pub lookup_duration: Option<Duration>,
@@ -73,6 +76,16 @@ impl RouteDecision {
     }
 }
 
+/// Outcome of running the config script over a cleaned URL.
+struct ScriptRoute {
+    target: Option<BrowserTarget>,
+    /// URL the handlers matched against.
+    routed: Url,
+    /// Launch URL when a preflight resolve replaced the URL — already cleaned.
+    resolved_launch: Option<Url>,
+    fallback: bool,
+}
+
 pub struct Router {
     config: LoadedConfig,
     registry: BrowserRegistry,
@@ -103,18 +116,23 @@ impl Router {
         let cleaning_mode = self.config.runtime.url_cleaning_mode()?;
         let cleaned = url_clean::clean_url(&url, &cleaning_mode);
 
-        let (target, routed_url, script_fallback) =
-            match self.route_script(&cleaned.routed, context) {
-                Ok(result) => result,
-                Err(err) => {
-                    eprintln!("routing script error: {err}. Falling back to defaultBrowser.");
-                    (None, cleaned.routed.clone(), true)
+        let route = match self.route_script(&cleaned.routed, context, &cleaning_mode) {
+            Ok(result) => result,
+            Err(err) => {
+                eprintln!("routing script error: {err}. Falling back to defaultBrowser.");
+                ScriptRoute {
+                    target: None,
+                    routed: cleaned.routed.clone(),
+                    resolved_launch: None,
+                    fallback: true,
                 }
-            };
+            }
+        };
+        let script_fallback = route.fallback;
+        let launch_url = pick_launch_url(&cleaned, &route);
+        let routed_url = route.routed;
 
-        let launch_url = pick_launch_url(&cleaned, &routed_url);
-
-        let target = match target {
+        let target = match route.target {
             Some(t) if t.name.is_some() => t,
             _ => BrowserTarget {
                 name: Some(self.config.runtime.default_browser()?),
@@ -213,9 +231,13 @@ impl Router {
             (None, None, None)
         };
 
+        // Match on the cleaned destination, mirroring `decide` — a resolved short
+        // link can itself be a wrapper, and the probe must report the browser the
+        // real route would pick, not one chosen from an uncleaned URL.
         let route_url = resolved_url
             .as_deref()
             .and_then(|s| Url::parse(s).ok())
+            .map(|resolved| url_clean::clean_url(&resolved, &cleaning_mode).routed)
             .unwrap_or(prepared.clone());
 
         let (browser, profile) = match self.config.runtime.match_handlers(&route_url, context) {
@@ -238,6 +260,11 @@ impl Router {
             Err(_) => (None, None),
         };
 
+        let routed_display = resolved_url
+            .as_deref()
+            .filter(|resolved| *resolved != route_url.as_str())
+            .map(|_| route_url.to_string());
+
         Ok(PreflightProbe {
             input_url,
             prepared_url: prepared.to_string(),
@@ -245,6 +272,7 @@ impl Router {
             config_matched,
             host_consented,
             resolved_url,
+            routed_url: routed_display,
             preflight_error,
             lookup_duration,
             browser,
@@ -256,13 +284,31 @@ impl Router {
         &self,
         url: &Url,
         context: &Context,
-    ) -> Result<(Option<BrowserTarget>, Url, bool)> {
+        cleaning_mode: &str,
+    ) -> Result<ScriptRoute> {
         let prepared = self.config.runtime.prepare_url(url, context)?;
-        let routed_url = self
+
+        // A resolved short link is machine-discovered, not user-authored: whatever
+        // sits at the end of the redirect chain is unknown and may itself be a
+        // wrapper or carry tracking params. So it goes through cleaning exactly
+        // like the original input did — otherwise handlers would match on the
+        // wrapper again, which is the very thing cleaning exists to prevent.
+        let resolved = self
             .maybe_preflight(&prepared, context)?
+            .map(|resolved| url_clean::clean_url(&resolved, cleaning_mode));
+
+        let routed = resolved
+            .as_ref()
+            .map(|cleaned| cleaned.routed.clone())
             .unwrap_or(prepared);
-        let target = self.config.runtime.match_handlers(&routed_url, context)?;
-        Ok((target, routed_url, false))
+        let target = self.config.runtime.match_handlers(&routed, context)?;
+
+        Ok(ScriptRoute {
+            target,
+            routed,
+            resolved_launch: resolved.map(|cleaned| cleaned.launch),
+            fallback: false,
+        })
     }
 
     fn maybe_preflight(&self, url: &Url, context: &Context) -> Result<Option<Url>> {
@@ -334,15 +380,21 @@ impl Router {
 /// Decide which URL the browser gets.
 ///
 /// Cleaning already picked one (in `route` mode deliberately the untouched
-/// wrapper), but a `rewrite` rule or a preflight resolve may have transformed the
-/// URL afterwards. Those are explicit user intent, so they win — otherwise both
-/// features would be silently inert whenever cleaning wanted to keep the original.
-fn pick_launch_url(cleaned: &url_clean::CleanOutcome, routed: &Url) -> Url {
-    if *routed == cleaned.routed {
-        cleaned.launch.clone()
-    } else {
-        routed.clone()
+/// wrapper), but the config script may have moved the URL afterwards. Those
+/// moves win — otherwise `rewrite` and `resolve` would be silently inert
+/// whenever cleaning wanted to keep the original.
+fn pick_launch_url(cleaned: &url_clean::CleanOutcome, route: &ScriptRoute) -> Url {
+    // Preflight resolved the URL. Skipping the redirector is the whole point of
+    // `resolve` — the user consented to that host explicitly — and the
+    // destination was already cleaned in its own right.
+    if let Some(resolved) = &route.resolved_launch {
+        return resolved.clone();
     }
+    // A `rewrite` rule moved the URL: user-authored, so its result is final.
+    if route.routed != cleaned.routed {
+        return route.routed.clone();
+    }
+    cleaned.launch.clone()
 }
 
 fn parse_browser_spec(spec: &str) -> (String, Option<String>) {
@@ -370,11 +422,20 @@ mod tests {
         url_clean::clean_url(&Url::parse(WRAPPER).unwrap(), "route")
     }
 
+    fn script_route(routed: &Url, resolved_launch: Option<Url>) -> ScriptRoute {
+        ScriptRoute {
+            target: None,
+            routed: routed.clone(),
+            resolved_launch,
+            fallback: false,
+        }
+    }
+
     #[test]
     fn untouched_route_keeps_the_wrapper_for_the_browser() {
         let cleaned = route_outcome();
-        let routed = cleaned.routed.clone();
-        assert_eq!(pick_launch_url(&cleaned, &routed).as_str(), WRAPPER);
+        let route = script_route(&cleaned.routed, None);
+        assert_eq!(pick_launch_url(&cleaned, &route).as_str(), WRAPPER);
     }
 
     #[test]
@@ -383,8 +444,9 @@ mod tests {
         // wrapper anyway would make `rewrite` a no-op under `route`.
         let cleaned = route_outcome();
         let rewritten = Url::parse("https://intranet.example/page").unwrap();
+        let route = script_route(&rewritten, None);
         assert_eq!(
-            pick_launch_url(&cleaned, &rewritten).as_str(),
+            pick_launch_url(&cleaned, &route).as_str(),
             "https://intranet.example/page"
         );
     }
@@ -392,11 +454,42 @@ mod tests {
     #[test]
     fn direct_mode_launches_what_it_routed() {
         let cleaned = url_clean::clean_url(&Url::parse(WRAPPER).unwrap(), "direct");
-        let routed = cleaned.routed.clone();
+        let route = script_route(&cleaned.routed, None);
         assert_eq!(
-            pick_launch_url(&cleaned, &routed).as_str(),
+            pick_launch_url(&cleaned, &route).as_str(),
             "https://example.org/page"
         );
+    }
+
+    #[test]
+    fn preflight_result_overrides_the_preserved_original() {
+        // `resolve` skipping the redirector is the point of consenting to a host,
+        // so its destination is launched rather than the short link.
+        let cleaned =
+            url_clean::clean_url(&Url::parse("https://short.example/r/abc").unwrap(), "route");
+        let destination = Url::parse("https://youtu.be/xyz").unwrap();
+        let route = script_route(&destination, Some(destination.clone()));
+        assert_eq!(
+            pick_launch_url(&cleaned, &route).as_str(),
+            "https://youtu.be/xyz"
+        );
+    }
+
+    #[test]
+    fn preflight_destination_is_cleaned_before_use() {
+        // The bug this guards: a resolved short link went straight to matching and
+        // launching, so tracking params survived and a wrapper destination would
+        // have been matched as the wrapper.
+        let resolved = Url::parse("https://youtu.be/xyz?utm_source=mail&list=keep").unwrap();
+        let cleaned = url_clean::clean_url(&resolved, "route");
+        assert_eq!(cleaned.routed.as_str(), "https://youtu.be/xyz?list=keep");
+        assert_eq!(cleaned.launch.as_str(), "https://youtu.be/xyz?list=keep");
+
+        // And a wrapper at the end of the chain still resolves to its destination
+        // for matching, while `route` keeps the wrapper for the browser.
+        let wrapped = url_clean::clean_url(&Url::parse(WRAPPER).unwrap(), "route");
+        assert_eq!(wrapped.routed.as_str(), "https://example.org/page");
+        assert_eq!(wrapped.launch.as_str(), WRAPPER);
     }
 
     #[test]

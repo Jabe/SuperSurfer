@@ -284,6 +284,9 @@ fn cmd_resolve_test(url: &str) -> Result<()> {
         );
     } else if let Some(resolved) = &probe.resolved_url {
         println!("resolved: {resolved}");
+        if let Some(routed) = &probe.routed_url {
+            println!("routed:   {routed}");
+        }
     } else if let Some(err) = &probe.preflight_error {
         println!("preflight: failed ({err})");
     } else {
