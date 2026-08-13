@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
 
 concurrency:
@@ -52,14 +53,37 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Install mingw-w64 windres
+        run: sudo apt-get update && sudo apt-get install -y binutils-mingw-w64-x86-64
+
       - name: Install cargo-zigbuild
         run: cargo install cargo-zigbuild --locked
 
       - name: Cross-compile release binary
         run: bash packaging/windows/build-cross.sh
 
-      - name: Verify artifact
-        run: test -f dist/supersurfer.exe
+      - name: Verify artifact and PE version resource
+        run: |
+          test -f dist/supersurfer.exe
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          version = re.search(r'^version = "([^"]+)"', Path("Cargo.toml").read_text(), re.M).group(1)
+          data = Path("dist/supersurfer.exe").read_bytes()
+
+          def u16(s: str) -> bytes:
+              return s.encode("utf-16le")
+
+          missing = [
+              name
+              for name in ("ProductName", "SuperSurfer", "FileVersion", version)
+              if u16(name) not in data
+          ]
+          if missing:
+              raise SystemExit(f"PE version resource missing UTF-16 strings: {missing}")
+          print(f"PE version resource OK ({version})")
+          PY
 
       - uses: actions/upload-artifact@v4
         with:
@@ -136,3 +160,52 @@ jobs:
           name: supersurfer-macos
           path: dist/SuperSurfer.app.zip
           if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [check, build-windows, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          notes="$(mktemp)"
+          cat >"$notes" <<EOF
+          SuperSurfer ${tag} binaries for Windows, macOS, and Linux.
+
+          ### Downloads
+
+          | Platform | Artifact |
+          | --- | --- |
+          | Windows x86_64 | \`supersurfer.exe\` |
+          | macOS Apple Silicon | \`SuperSurfer.app.zip\` |
+          | Linux x86_64 | \`supersurfer-linux-x86_64.tar.gz\` |
+          | Linux aarch64 | \`supersurfer-linux-aarch64.tar.gz\` |
+
+          **Windows:** run \`supersurfer.exe init --register\`, then set SuperSurfer as default under Settings → Apps → Default apps.
+
+          **macOS:** unzip into \`/Applications\`, then \`/Applications/SuperSurfer.app/Contents/MacOS/SuperSurfer register\`.
+
+          **Linux:** extract the tarball for your arch and run \`./install.sh\`.
+
+          See the [manual](https://github.com/Jabe/SuperSurfer/blob/${tag}/docs/manual.md).
+          EOF
+          gh release create "$tag" \
+            artifacts/supersurfer-windows/supersurfer.exe \
+            artifacts/supersurfer-macos/SuperSurfer.app.zip \
+            artifacts/supersurfer-linux/supersurfer-linux-x86_64.tar.gz \
+            artifacts/supersurfer-linux/supersurfer-linux-aarch64.tar.gz \
+            --title "SuperSurfer ${tag}" \
+            --notes-file "$notes" \
+            --verify-tag

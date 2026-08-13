@@ -22,6 +22,11 @@ if ! rustup target list --installed | grep -qx "$TARGET"; then
   rustup target add "$TARGET"
 fi
 
+if ! command -v x86_64-w64-mingw32-windres >/dev/null; then
+  echo "note: x86_64-w64-mingw32-windres not found; Windows PE version info will be omitted."
+  echo "      CI installs binutils-mingw-w64-x86-64. Locally: brew/apt install mingw-w64."
+fi
+
 echo "Cross-compiling for $TARGET..."
 cargo zigbuild --release --target "$TARGET"
 

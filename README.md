@@ -6,6 +6,17 @@ SuperSurfer registers as your OS default browser, intercepts every link open, ev
 
 **Manual:** [docs/manual.md](docs/manual.md) (also opened in your browser on first run)
 
+## Downloads
+
+Binaries are on the [Releases](https://github.com/Jabe/SuperSurfer/releases) page.
+
+| Platform | Artifact |
+|---|---|
+| Windows x86_64 | `supersurfer.exe` |
+| macOS Apple Silicon | `SuperSurfer.app.zip` |
+| Linux x86_64 | `supersurfer-linux-x86_64.tar.gz` |
+| Linux aarch64 | `supersurfer-linux-aarch64.tar.gz` |
+
 ## Quick start
 
 This project uses [mise](https://mise.jdx.dev/) for tool versions (Rust, rustfmt, clippy).
@@ -111,6 +122,8 @@ The bundle contains a small Cocoa launcher (`SuperSurfer`) that receives `http`/
 
 ### Windows — `supersurfer.exe`
 
+Download `supersurfer.exe` from [Releases](https://github.com/Jabe/SuperSurfer/releases), or build locally.
+
 On Windows, or cross-compile from macOS/Linux (`mise` installs `zig`; first run may install `cargo-zigbuild`):
 
 ```bash
@@ -128,7 +141,7 @@ On Windows:
 
 ### Linux — `supersurfer`
 
-Builds dynamically linked glibc binaries for **x86_64** and **aarch64**. Release artifacts are built on Ubuntu 22.04 (glibc 2.35) as the minimum supported baseline; newer distros work too.
+Download the tarball for your arch from [Releases](https://github.com/Jabe/SuperSurfer/releases). Builds are dynamically linked glibc binaries for **x86_64** and **aarch64**. Release artifacts are built on Ubuntu 22.04 (glibc 2.35) as the minimum supported baseline; newer distros work too.
 
 **x86_64 (Intel/AMD):**
 ```bash

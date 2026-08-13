@@ -19,20 +19,24 @@ Config locations:
 
 ## Install per platform
 
+Download the matching artifact from [Releases](https://github.com/Jabe/SuperSurfer/releases).
+
 ### macOS
 
+Unzip `SuperSurfer.app.zip` into `/Applications`, then:
+
 ```bash
-mise run package-macos
-cp -R dist/SuperSurfer.app /Applications/
 /Applications/SuperSurfer.app/Contents/MacOS/SuperSurfer register
 ```
 
+From source: `mise run package-macos` and copy `dist/SuperSurfer.app` into `/Applications`.
+
 ### Windows
 
-Download `supersurfer.exe` from CI artifacts, then:
+Download `supersurfer.exe`, then:
 
 ```powershell
-.\supersurfer.exe register
+.\supersurfer.exe init --register
 ```
 
 Set SuperSurfer as default under **Settings → Apps → Default apps**.
@@ -40,8 +44,8 @@ Set SuperSurfer as default under **Settings → Apps → Default apps**.
 ### Linux
 
 ```bash
-tar -xzf supersurfer-linux-aarch64.tar.gz   # or x86_64
-cd linux-aarch64 && ./install.sh
+tar -xzf supersurfer-linux-x86_64.tar.gz   # or aarch64
+cd linux && ./install.sh                   # linux-aarch64 on ARM
 supersurfer register
 ```
 
