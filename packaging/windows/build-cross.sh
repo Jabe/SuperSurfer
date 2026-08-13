@@ -22,11 +22,6 @@ if ! rustup target list --installed | grep -qx "$TARGET"; then
   rustup target add "$TARGET"
 fi
 
-if ! command -v x86_64-w64-mingw32-windres >/dev/null; then
-  echo "note: x86_64-w64-mingw32-windres not found; Windows PE version info will be omitted."
-  echo "      CI installs gcc-mingw-w64-x86-64. Locally: brew/apt install mingw-w64."
-fi
-
 echo "Cross-compiling for $TARGET..."
 cargo zigbuild --release --target "$TARGET"
 
@@ -36,6 +31,10 @@ OUT="$DIST/supersurfer.exe"
 
 mkdir -p "$DIST"
 cp -f "$EXE" "$OUT"
+
+VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n1)"
+echo "Embedding PE version info ($VERSION)..."
+cargo run --quiet --release --manifest-path packaging/windows/embed-version/Cargo.toml -- "$OUT" "$VERSION"
 
 echo "Built $OUT"
 echo "Copy to a Windows machine, then run: supersurfer.exe init --register"

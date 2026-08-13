@@ -1,0 +1,8 @@
+[package]
+name = "embed-version"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+editpe = { version = "0.2", default-features = false, features = ["std"] }

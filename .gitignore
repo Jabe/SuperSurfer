@@ -1,4 +1,5 @@
 /target
+/packaging/windows/embed-version/target
 /types/
 /dist/
 browser-router-spec.md
