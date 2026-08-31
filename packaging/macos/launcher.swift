@@ -40,27 +40,30 @@ func openerArgs() -> [String] {
     return args
 }
 
-func runRouter(with urls: [String]) {
-    let opener = openerArgs()
-    for url in urls {
-        let process = Process()
-        process.executableURL = routerBinary()
-        process.arguments = opener + [url]
-        process.standardOutput = FileHandle.standardOutput
-        process.standardError = FileHandle.standardError
-        try? process.run()
+func runProcess(arguments: [String]) {
+    let process = Process()
+    process.executableURL = routerBinary()
+    process.arguments = arguments
+    process.standardOutput = FileHandle.standardOutput
+    process.standardError = FileHandle.standardError
+    do {
+        try process.run()
         process.waitUntilExit()
+    } catch {
+        FileHandle.standardError.write(
+            Data("failed to run supersurfer-bin: \(error)\n".utf8)
+        )
+    }
+}
+
+func runRouter(with urls: [String], opener: [String]) {
+    for url in urls {
+        runProcess(arguments: opener + [url])
     }
 }
 
 func runSupersurfer(args: [String]) {
-    let process = Process()
-    process.executableURL = routerBinary()
-    process.arguments = args
-    process.standardOutput = FileHandle.standardOutput
-    process.standardError = FileHandle.standardError
-    try? process.run()
-    process.waitUntilExit()
+    runProcess(arguments: args)
 }
 
 func cliArgs() -> [String] {
@@ -70,6 +73,7 @@ func cliArgs() -> [String] {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var finished = false
+    private var inflight = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args = cliArgs()
@@ -78,8 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if !urls.isEmpty {
             finished = true
-            runRouter(with: urls)
-            NSApp.terminate(nil)
+            handleUrlsThenQuit(urls)
             return
         }
 
@@ -102,10 +105,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         finished = true
         let routable = urls.map(\.absoluteString).filter(isRoutableInput)
-        if !routable.isEmpty {
-            runRouter(with: routable)
+        if routable.isEmpty {
+            quitIfIdle()
+            return
         }
-        NSApp.terminate(nil)
+        handleUrlsThenQuit(routable)
+    }
+
+    /// Route URLs off the main thread. Waiting on the router here used to pin
+    /// the Cocoa run loop: one hung `supersurfer-bin` (e.g. waiting for Edge)
+    /// made every later link click a no-op, with nothing written to the log.
+    private func handleUrlsThenQuit(_ urls: [String]) {
+        let opener = openerArgs()
+        inflight += 1
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            runRouter(with: urls, opener: opener)
+            DispatchQueue.main.async {
+                self?.inflight -= 1
+                self?.quitIfIdle()
+            }
+        }
+    }
+
+    private func quitIfIdle() {
+        if inflight == 0 {
+            NSApp.terminate(nil)
+        }
     }
 }
 

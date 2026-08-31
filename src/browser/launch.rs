@@ -12,7 +12,7 @@ use std::fs;
 #[cfg(target_os = "macos")]
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 pub fn launch_browser(_registry: &BrowserRegistry, decision: &RouteDecision) -> Result<()> {
     ensure_launchable_url(&decision.launch_url)?;
@@ -82,11 +82,7 @@ fn launch_linux(exec: &str, decision: &RouteDecision) -> Result<()> {
         }
     }
     cmd.arg(&decision.launch_url);
-    cmd.status()
-        .context("failed to launch browser")?
-        .success()
-        .then_some(())
-        .context("browser launcher exited with failure")
+    spawn_gui_process(cmd)
 }
 
 #[cfg(target_os = "macos")]
@@ -111,32 +107,42 @@ fn launch_macos(app_path: &str, decision: &RouteDecision) -> Result<()> {
         }
     }
 
-    let status = if browser_args.is_empty() {
-        // Pass the URL as a document so macOS delivers it to a running browser instance.
-        Command::new("open")
+    if browser_args.is_empty() {
+        // Pass the URL as a document so macOS delivers it to a running browser
+        // instance. `open` itself is short-lived, so waiting on it is fine.
+        let status = Command::new("open")
             .arg("-a")
             .arg(app_path)
             .arg(&decision.launch_url)
             .status()
-    } else if is_chromium_browser(decision.browser_id.as_str())
+            .context("failed to launch browser")?;
+        return status
+            .success()
+            .then_some(())
+            .context("browser launcher exited with failure");
+    }
+
+    if is_chromium_browser(decision.browser_id.as_str())
         || is_gecko_browser(decision.browser_id.as_str())
     {
+        // Chromium/Gecko need profile flags, which `open -a` drops when the
+        // browser is already running. Spawn the executable directly — but do
+        // not wait: if the browser is not already up, this process *is* the
+        // browser and would otherwise pin SuperSurfer until the user quits it.
         let exe = macos_app_executable(app_path)?;
-        Command::new(&exe)
-            .args(&browser_args)
-            .arg(&decision.launch_url)
-            .status()
-    } else {
-        browser_args.push(decision.launch_url.clone());
-        Command::new("open")
-            .arg("-a")
-            .arg(app_path)
-            .arg("--args")
-            .args(&browser_args)
-            .status()
+        let mut cmd = Command::new(&exe);
+        cmd.args(&browser_args).arg(&decision.launch_url);
+        return spawn_gui_process(cmd);
     }
-    .context("failed to launch browser")?;
 
+    browser_args.push(decision.launch_url.clone());
+    let status = Command::new("open")
+        .arg("-a")
+        .arg(app_path)
+        .arg("--args")
+        .args(&browser_args)
+        .status()
+        .context("failed to launch browser")?;
     status
         .success()
         .then_some(())
@@ -179,11 +185,36 @@ fn launch_windows(exe_path: &str, decision: &RouteDecision) -> Result<()> {
         }
     }
     cmd.arg(browser_launch_arg(&decision.launch_url));
-    cmd.status()
-        .context("failed to launch browser")?
-        .success()
-        .then_some(())
-        .context("browser launcher exited with failure")
+    spawn_gui_process(cmd)
+}
+
+/// Start a long-lived GUI browser and return immediately.
+///
+/// Waiting on the child (`.status()`) hangs SuperSurfer for the lifetime of
+/// the browser whenever this process *is* the browser rather than a stub that
+/// hands off to an already-running instance. That pins the macOS launcher on
+/// its main thread (`waitUntilExit`), so subsequent link clicks do nothing.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+fn spawn_gui_process(mut cmd: Command) -> Result<()> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+
+    drop(cmd.spawn().context("failed to launch browser")?);
+    Ok(())
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
@@ -215,7 +246,9 @@ fn private_window_flag(browser_id: &str) -> Option<&'static str> {
     any(target_os = "macos", target_os = "windows", target_os = "linux")
 ))]
 mod tests {
-    use super::{ensure_launchable_url, private_window_flag};
+    use super::{ensure_launchable_url, private_window_flag, spawn_gui_process};
+    use std::process::Command;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn private_flag_is_browser_specific() {
@@ -247,6 +280,25 @@ mod tests {
         ] {
             assert!(ensure_launchable_url(url).is_err(), "{url} must be refused");
         }
+    }
+
+    #[test]
+    fn spawn_gui_process_does_not_wait_for_child() {
+        let cmd = if cfg!(windows) {
+            let mut c = Command::new("ping");
+            c.args(["-n", "8", "127.0.0.1"]);
+            c
+        } else {
+            let mut c = Command::new("sleep");
+            c.arg("8");
+            c
+        };
+        let start = Instant::now();
+        spawn_gui_process(cmd).expect("spawn");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "must not wait for the child to exit"
+        );
     }
 }
 
