@@ -17,7 +17,7 @@ use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
 use ureq::Agent;
 use url::Url;
 
-const USER_AGENT: &str = "SuperSurfer/0.1.0 (preflight)";
+const USER_AGENT: &str = concat!("SuperSurfer/", env!("CARGO_PKG_VERSION"), " (preflight)");
 const TIMEOUT: Duration = Duration::from_secs(2);
 const REDIRECT_STATUSES: &[u16] = &[301, 302, 303, 307, 308];
 
