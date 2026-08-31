@@ -66,6 +66,11 @@ pub fn register_default_browser() -> Result<()> {
         return Ok(());
     }
 
+    if is_default_browser() {
+        println!("SuperSurfer is already the default browser for http and https.");
+        return Ok(());
+    }
+
     println!("Registered SuperSurfer.app with Launch Services.");
     open_default_browser_settings();
     println!("Choose SuperSurfer under Default web browser (quit and reopen System Settings if it is missing).");
@@ -78,6 +83,12 @@ pub fn system_default_browser_id(registry: &BrowserRegistry) -> Option<String> {
     registry.id_for_bundle_id(&bundle_id)
 }
 
+fn is_default_browser() -> bool {
+    ["http", "https"]
+        .into_iter()
+        .all(|scheme| system_default_bundle_id(scheme).as_deref() == Some(BUNDLE_ID))
+}
+
 fn system_default_bundle_id(scheme: &str) -> Option<String> {
     let home = directories::UserDirs::new()?.home_dir().to_path_buf();
     let path = home
@@ -85,7 +96,10 @@ fn system_default_bundle_id(scheme: &str) -> Option<String> {
     let file = fs::File::open(path).ok()?;
     let value: plist::Value = plist::from_reader(file).ok()?;
     let handlers = value.as_dictionary()?.get("LSHandlers")?.as_array()?;
+    bundle_id_for_scheme(handlers, scheme)
+}
 
+fn bundle_id_for_scheme(handlers: &[plist::Value], scheme: &str) -> Option<String> {
     for handler in handlers {
         let handler_dict = handler.as_dictionary()?;
         let handler_scheme = handler_dict
@@ -118,11 +132,9 @@ pub fn registration_status() -> String {
     };
 
     let mut parts = vec![format!("bundle: {}", app.display())];
-    if let Ok(default_http) = default_handler_for("http") {
-        parts.push(format!("default http handler: {default_http}"));
-    }
-    if let Ok(default_https) = default_handler_for("https") {
-        parts.push(format!("default https handler: {default_https}"));
+    for scheme in ["http", "https"] {
+        let handler = system_default_bundle_id(scheme).unwrap_or_else(|| "unknown".to_string());
+        parts.push(format!("default {scheme} handler: {handler}"));
     }
     parts.join("; ")
 }
@@ -201,22 +213,47 @@ fn open_default_browser_settings() {
         .status();
 }
 
-fn default_handler_for(scheme: &str) -> Result<String> {
-    let output = Command::new("defaults")
-        .args([
-            "read",
-            "com.apple.LaunchServices/com.apple.launchservices.secure",
-        ])
-        .output()?;
-    if !output.status.success() {
-        anyhow::bail!("defaults read failed");
+#[cfg(test)]
+mod tests {
+    use super::{bundle_id_for_scheme, BUNDLE_ID};
+    use plist::{Dictionary, Value};
+
+    fn handler_role_all(scheme: &str, bundle: &str) -> Value {
+        let mut dict = Dictionary::new();
+        dict.insert("LSHandlerURLScheme".into(), scheme.into());
+        dict.insert("LSHandlerRoleAll".into(), bundle.into());
+        Value::Dictionary(dict)
     }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let marker = format!("\"{scheme}\" =");
-    for line in text.lines() {
-        if line.contains(&marker) && line.contains(BUNDLE_ID) {
-            return Ok(BUNDLE_ID.to_string());
-        }
+
+    fn handler_preferred(scheme: &str, bundle: &str) -> Value {
+        let mut dict = Dictionary::new();
+        dict.insert("LSHandlerURLScheme".into(), scheme.into());
+        dict.insert(
+            "LSHandlerPreferredIdentifiers".into(),
+            Value::Array(vec![bundle.into()]),
+        );
+        Value::Dictionary(dict)
     }
-    Ok("not supersurfer".to_string())
+
+    #[test]
+    fn bundle_id_from_role_all() {
+        let handlers = vec![
+            handler_role_all("ftp", "com.apple.Safari"),
+            handler_role_all("https", BUNDLE_ID),
+        ];
+        assert_eq!(
+            bundle_id_for_scheme(&handlers, "https").as_deref(),
+            Some(BUNDLE_ID)
+        );
+        assert_eq!(bundle_id_for_scheme(&handlers, "http"), None);
+    }
+
+    #[test]
+    fn bundle_id_from_preferred_identifiers() {
+        let handlers = vec![handler_preferred("http", BUNDLE_ID)];
+        assert_eq!(
+            bundle_id_for_scheme(&handlers, "http").as_deref(),
+            Some(BUNDLE_ID)
+        );
+    }
 }
