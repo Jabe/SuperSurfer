@@ -1,6 +1,6 @@
 [tools]
-rust = { version = "1.95.0", components = "rustfmt,clippy" }
-zig = "0.14.1"
+rust = { version = "1.98.0", components = "rustfmt,clippy" }
+zig = "0.16.0"
 
 [env]
 _.path = ["./target/debug", "./target/release"]
@@ -35,7 +35,7 @@ run = [
 
 [tasks.check-linux]
 description = "Same checks as CI on ubuntu-latest (requires Docker)"
-run = "docker run --rm -v $PWD:/app -w /app rust:1.95.0 bash -c 'rustup component add rustfmt clippy && cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test'"
+run = "docker run --rm -v $PWD:/app -w /app rust:1.98.0 bash -c 'rustup component add rustfmt clippy && cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test'"
 
 [tasks.dev]
 description = "Run supersurfer CLI (pass args after --)"
