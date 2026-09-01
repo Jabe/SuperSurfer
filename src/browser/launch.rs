@@ -7,12 +7,10 @@ use crate::routing::RouteDecision;
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 use anyhow::Context as _;
 use anyhow::Result;
-#[cfg(target_os = "macos")]
-use std::fs;
-#[cfg(target_os = "macos")]
-use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-use std::process::{Command, Stdio};
+use std::process::Command;
+#[cfg(any(test, target_os = "windows", target_os = "linux"))]
+use std::process::Stdio;
 
 pub fn launch_browser(_registry: &BrowserRegistry, decision: &RouteDecision) -> Result<()> {
     ensure_launchable_url(&decision.launch_url)?;
@@ -107,40 +105,17 @@ fn launch_macos(app_path: &str, decision: &RouteDecision) -> Result<()> {
         }
     }
 
-    if browser_args.is_empty() {
-        // Pass the URL as a document so macOS delivers it to a running browser
-        // instance. `open` itself is short-lived, so waiting on it is fine.
-        let status = Command::new("open")
-            .arg("-a")
-            .arg(app_path)
-            .arg(&decision.launch_url)
-            .status()
-            .context("failed to launch browser")?;
-        return status
-            .success()
-            .then_some(())
-            .context("browser launcher exited with failure");
-    }
-
-    if is_chromium_browser(decision.browser_id.as_str())
-        || is_gecko_browser(decision.browser_id.as_str())
-    {
-        // Chromium/Gecko need profile flags, which `open -a` drops when the
-        // browser is already running. Spawn the executable directly — but do
-        // not wait: if the browser is not already up, this process *is* the
-        // browser and would otherwise pin SuperSurfer until the user quits it.
-        let exe = macos_app_executable(app_path)?;
-        let mut cmd = Command::new(&exe);
-        cmd.args(&browser_args).arg(&decision.launch_url);
-        return spawn_gui_process(cmd);
-    }
-
-    browser_args.push(decision.launch_url.clone());
+    // Always go through Launch Services (`open`), never the inner binary.
+    // Spawning Edge/Chrome directly makes SuperSurfer the TCC responsible
+    // process, so macOS reports "was prevented from modifying apps" when the
+    // browser updater touches its own bundle. `open` is short-lived, so
+    // waiting on it is fine.
     let status = Command::new("open")
-        .arg("-a")
-        .arg(app_path)
-        .arg("--args")
-        .args(&browser_args)
+        .args(macos_open_args(
+            app_path,
+            &decision.launch_url,
+            &browser_args,
+        ))
         .status()
         .context("failed to launch browser")?;
     status
@@ -149,20 +124,25 @@ fn launch_macos(app_path: &str, decision: &RouteDecision) -> Result<()> {
         .context("browser launcher exited with failure")
 }
 
-#[cfg(target_os = "macos")]
-fn macos_app_executable(app_path: &str) -> Result<PathBuf> {
-    let app = Path::new(app_path);
-    let plist_path = app.join("Contents/Info.plist");
-    let file = fs::File::open(&plist_path)
-        .with_context(|| format!("could not open {}", plist_path.display()))?;
-    let value: plist::Value = plist::from_reader(file)
-        .with_context(|| format!("could not parse {}", plist_path.display()))?;
-    let name = value
-        .as_dictionary()
-        .and_then(|dict| dict.get("CFBundleExecutable"))
-        .and_then(|value| value.as_string())
-        .context("CFBundleExecutable missing from Info.plist")?;
-    Ok(app.join("Contents/MacOS").join(name))
+/// argv for `/usr/bin/open`. Extra flags need `-n`: without it, Launch Services
+/// drops `--args` when the app is already running. `-n` starts a short-lived
+/// new instance that Chromium/Gecko fold into the existing process via the
+/// singleton lock. The URL stays after `--args` so it is not opened as a
+/// document in the last-used profile.
+#[cfg(any(test, target_os = "macos"))]
+fn macos_open_args(app_path: &str, url: &str, browser_args: &[String]) -> Vec<String> {
+    if browser_args.is_empty() {
+        return vec!["-a".to_string(), app_path.to_string(), url.to_string()];
+    }
+    let mut args = vec![
+        "-n".to_string(),
+        "-a".to_string(),
+        app_path.to_string(),
+        "--args".to_string(),
+    ];
+    args.extend(browser_args.iter().cloned());
+    args.push(url.to_string());
+    args
 }
 
 #[cfg(target_os = "windows")]
@@ -194,7 +174,7 @@ fn launch_windows(exe_path: &str, decision: &RouteDecision) -> Result<()> {
 /// the browser whenever this process *is* the browser rather than a stub that
 /// hands off to an already-running instance. That pins the macOS launcher on
 /// its main thread (`waitUntilExit`), so subsequent link clicks do nothing.
-#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+#[cfg(any(test, target_os = "windows", target_os = "linux"))]
 fn spawn_gui_process(mut cmd: Command) -> Result<()> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -246,7 +226,7 @@ fn private_window_flag(browser_id: &str) -> Option<&'static str> {
     any(target_os = "macos", target_os = "windows", target_os = "linux")
 ))]
 mod tests {
-    use super::{ensure_launchable_url, private_window_flag, spawn_gui_process};
+    use super::{ensure_launchable_url, macos_open_args, private_window_flag, spawn_gui_process};
     use std::process::Command;
     use std::time::{Duration, Instant};
 
@@ -280,6 +260,56 @@ mod tests {
         ] {
             assert!(ensure_launchable_url(url).is_err(), "{url} must be refused");
         }
+    }
+
+    #[test]
+    fn macos_open_passes_url_as_document_without_extra_args() {
+        assert_eq!(
+            macos_open_args(
+                "/Applications/Brave Browser.app",
+                "https://example.com",
+                &[]
+            ),
+            [
+                "-a",
+                "/Applications/Brave Browser.app",
+                "https://example.com"
+            ]
+        );
+    }
+
+    #[test]
+    fn macos_open_uses_new_instance_so_profile_args_are_not_dropped() {
+        assert_eq!(
+            macos_open_args(
+                "/Applications/Microsoft Edge.app",
+                "https://example.com",
+                &["--profile-directory=Profile 1".to_string()],
+            ),
+            [
+                "-n",
+                "-a",
+                "/Applications/Microsoft Edge.app",
+                "--args",
+                "--profile-directory=Profile 1",
+                "https://example.com",
+            ]
+        );
+    }
+
+    #[test]
+    fn macos_open_keeps_url_after_args_not_as_document() {
+        let args = macos_open_args(
+            "/Applications/Firefox.app",
+            "https://example.com",
+            &["-P".to_string(), "Work".to_string()],
+        );
+        let split = args.iter().position(|a| a == "--args").expect("--args");
+        assert!(
+            !args[..split].iter().any(|a| a == "https://example.com"),
+            "URL before --args would open in the last-used profile"
+        );
+        assert_eq!(args.last().map(String::as_str), Some("https://example.com"));
     }
 
     #[test]
