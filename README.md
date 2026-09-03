@@ -1,52 +1,64 @@
 # SuperSurfer
 
-**One config. Every browser. macOS + Windows + Linux.**
+**One config. Every browser. macOS · Windows · Linux.**
+
+[![Release](https://img.shields.io/github/v/release/Jabe/SuperSurfer)](https://github.com/Jabe/SuperSurfer/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/Jabe/SuperSurfer/ci.yml?branch=main)](https://github.com/Jabe/SuperSurfer/actions)
+[![License: MIT](https://img.shields.io/github/license/Jabe/SuperSurfer)](LICENSE)
 
 SuperSurfer registers as your OS default browser, intercepts every link open, evaluates a JavaScript routing config, and forwards the URL to the right browser/profile.
 
+A [Finicky](https://github.com/johnste/finicky)-style router that also runs on Windows and Linux, with built-in safelink unwrapping and tracker stripping.
+
 **Manual:** [docs/manual.md](docs/manual.md) (also opened in your browser on first run)
 
-## Downloads
+| | SuperSurfer | Finicky |
+|---|---|---|
+| Platforms | macOS, Windows, Linux | macOS |
+| Config | JavaScript (`config.js`) | JavaScript / TypeScript |
+| URL cleaning | Built-in safelink unwrap + tracker strip | Rewrite rules you write |
+| Browser profiles | `chrome:work`, `{ name, profile }` | `{ name, profile }` |
+| License | MIT | MIT |
 
-Binaries are on the [Releases](https://github.com/Jabe/SuperSurfer/releases) page.
+## Install
 
-| Platform | Artifact |
+Binaries are on the [Releases](https://github.com/Jabe/SuperSurfer/releases) page. Direct links always point at the latest:
+
+| Platform | Download |
 |---|---|
-| Windows x86_64 | `supersurfer.exe` |
-| macOS Apple Silicon | `SuperSurfer.app.zip` |
-| Linux x86_64 | `supersurfer-linux-x86_64.tar.gz` |
-| Linux aarch64 | `supersurfer-linux-aarch64.tar.gz` |
+| Windows x86_64 | [`supersurfer.exe`](https://github.com/Jabe/SuperSurfer/releases/latest/download/supersurfer.exe) |
+| macOS Apple Silicon | [`SuperSurfer.app.zip`](https://github.com/Jabe/SuperSurfer/releases/latest/download/SuperSurfer.app.zip) |
+| Linux x86_64 | [`supersurfer-linux-x86_64.tar.gz`](https://github.com/Jabe/SuperSurfer/releases/latest/download/supersurfer-linux-x86_64.tar.gz) |
+| Linux aarch64 | [`supersurfer-linux-aarch64.tar.gz`](https://github.com/Jabe/SuperSurfer/releases/latest/download/supersurfer-linux-aarch64.tar.gz) |
 
-## Quick start
+Then register SuperSurfer as the default browser and try a dry-run:
 
-This project uses [mise](https://mise.jdx.dev/) for tool versions (Rust, rustfmt, clippy).
-
-```bash
-mise trust            # first time in this repo
-mise install          # install pinned Rust toolchain
-mise run build
-mise run dev -- init
-mise run dev -- test https://github.com/org/repo
-mise run doctor
-```
-
-Or without mise tasks:
+**macOS** — unzip into `/Applications`, then:
 
 ```bash
-cargo build --release
-./target/release/supersurfer          # first run: scaffolds config + opens manual
-./target/release/supersurfer doctor
-./target/release/supersurfer test https://github.com/org/repo
-./target/release/supersurfer register
+/Applications/SuperSurfer.app/Contents/MacOS/SuperSurfer register
+/Applications/SuperSurfer.app/Contents/MacOS/SuperSurfer test https://github.com/org/repo
 ```
 
-First run (no arguments) creates `config.js` and `supersurfer.d.ts`, then opens the [setup guide](docs/manual.md) in your default browser. URL routing (`supersurfer https://…`) also bootstraps config silently when needed.
+**Windows:**
 
-Legacy explicit init:
+```powershell
+.\supersurfer.exe init --register
+.\supersurfer.exe test https://github.com/org/repo
+```
+
+Set SuperSurfer as default under **Settings → Apps → Default apps**.
+
+**Linux:**
 
 ```bash
-./target/release/supersurfer init
+tar -xzf supersurfer-linux-x86_64.tar.gz   # or aarch64
+cd linux && ./install.sh                   # linux-aarch64 on ARM
+supersurfer register
+supersurfer test https://github.com/org/repo
 ```
+
+First run (no arguments) creates `config.js` and `supersurfer.d.ts`, then opens the [setup guide](docs/manual.md). URL routing (`supersurfer https://…`) also bootstraps config silently when needed.
 
 Config lives at:
 
@@ -74,6 +86,16 @@ export default {
 
 `processRunning("edge")` checks whether a browser (by id, display name, or process name) is running — snapshot on first call per route, then cached for that evaluation.
 
+## From Finicky
+
+There is no built-in migrate command. SuperSurfer already supports most Finicky config patterns (`{ name, profile }` browser targets, dynamic `browser` handlers, `rewrite` rules). Copy your `~/.finicky.js` into `config.js`, add a `/** @type {import('./supersurfer').RouterConfig} */` comment above `export default`, then adjust:
+
+- `finicky.matchHostnames([...])` → a local `matchHostnames()` helper, or `host` / `suffix` / `regex` matchers
+- `finicky.opener` → `ctx.opener`
+- custom `rewrite` + built-in URL cleaning may overlap — the built-in rules cover Outlook/Teams safelinks, Google, Slack, LinkedIn and more, so the equivalent `rewrite` rules can usually just go
+
+An LLM plus `supersurfer.d.ts` (written by `supersurfer init`) is the intended migration path. Validate with `supersurfer doctor` and `supersurfer test <url>`.
+
 ## URL cleaning
 
 Built-in rules unwrap redirect wrappers (Outlook/Teams safelinks, Azure Communication Services, Google, Slack, Facebook, LinkedIn, Trend Micro, Barracuda, Sophos) and strip tracking parameters (`utm_*`, `fbclid`, `gclid`, …). `urlCleaning` controls how far that reaches:
@@ -94,15 +116,47 @@ Worth knowing under `route`: allowing a host with `supersurfer resolve allow` gi
 
 `supersurfer test <url>` prints `routed:` and `opens:` separately, which is the quickest way to see a mode in action.
 
-## From Finicky
+## CLI
 
-There is no built-in migrate command. SuperSurfer already supports most Finicky config patterns (`{ name, profile }` browser targets, dynamic `browser` handlers, `rewrite` rules). Copy your `~/.finicky.js` into `config.js`, add a `/** @type {import('./supersurfer').RouterConfig} */` comment above `export default`, then adjust:
+| Command | Purpose |
+|---|---|
+| `supersurfer init` | Scaffold config + types |
+| `supersurfer register` | Register as default browser |
+| `supersurfer doctor` | List browsers, validate config |
+| `supersurfer test <url>` | Dry-run routing decision |
+| `supersurfer logs` | Tail decision log |
+| `supersurfer update-rules` | Fetch signed URL-cleaning rules (planned) |
 
-- `finicky.matchHostnames([...])` → a local `matchHostnames()` helper, or `host` / `suffix` / `regex` matchers
-- `finicky.opener` → `ctx.opener`
-- custom `rewrite` + built-in URL cleaning may overlap — the built-in rules cover Outlook/Teams safelinks, Google, Slack, LinkedIn and more, so the equivalent `rewrite` rules can usually just go
+When registered as the default browser, the OS invokes the packaged app with the URL (macOS: `SuperSurfer.app`; Windows: `supersurfer.exe "%1"`; Linux: `supersurfer %u` via `supersurfer.desktop`).
 
-An LLM plus `supersurfer.d.ts` (written by `supersurfer init`) is the intended migration path. Validate with `supersurfer doctor` and `supersurfer test <url>`.
+## Build from source
+
+This project uses [mise](https://mise.jdx.dev/) for tool versions (Rust, rustfmt, clippy).
+
+```bash
+mise trust            # first time in this repo
+mise install          # install pinned Rust toolchain
+mise run build
+mise run dev -- init
+mise run dev -- test https://github.com/org/repo
+mise run doctor
+```
+
+Or without mise tasks:
+
+```bash
+cargo build --release
+./target/release/supersurfer          # first run: scaffolds config + opens manual
+./target/release/supersurfer doctor
+./target/release/supersurfer test https://github.com/org/repo
+./target/release/supersurfer register
+```
+
+Legacy explicit init:
+
+```bash
+./target/release/supersurfer init
+```
 
 ## Packaging (default browser)
 
@@ -172,19 +226,6 @@ supersurfer doctor
 
 `register` installs `supersurfer.desktop` into `~/.local/share/applications/` and runs `xdg-settings set default-web-browser supersurfer.desktop` (with an `xdg-mime` fallback for `http`/`https`). Native browsers are discovered via `.desktop` files in the XDG application directories; Flatpak/Snap browsers are not yet supported.
 
-## CLI
-
-| Command | Purpose |
-|---|---|
-| `supersurfer init` | Scaffold config + types |
-| `supersurfer register` | Register as default browser |
-| `supersurfer doctor` | List browsers, validate config |
-| `supersurfer test <url>` | Dry-run routing decision |
-| `supersurfer logs` | Tail decision log |
-| `supersurfer update-rules` | Fetch signed URL-cleaning rules (planned) |
-
-When registered as the default browser, the OS invokes the packaged app with the URL (macOS: `SuperSurfer.app`; Windows: `supersurfer.exe "%1"`; Linux: `supersurfer %u` via `supersurfer.desktop`).
-
 ## Architecture
 
 ```
@@ -198,7 +239,7 @@ OS URL event → SuperSurfer (Rust)
 
 ## Status
 
-This is an initial implementation of the browser router spec:
+v0.1.x is usable as a default browser on macOS, Windows, and Linux:
 
 - Rust core with QuickJS sandboxed config runtime
 - JavaScript config with JSDoc types
@@ -210,7 +251,7 @@ This is an initial implementation of the browser router spec:
 - macOS, Windows, and Linux browser discovery + launch
 - CLI: `init`, `doctor`, `test`, `logs`
 
-**Not yet implemented:** signed/notarized distribution, signed rules updates.
+**Not yet:** signed/notarized distribution, signed rules updates. macOS Gatekeeper will warn on first open until the app is notarized — right-click → Open, or `xattr -cr /Applications/SuperSurfer.app`.
 
 ## License
 
