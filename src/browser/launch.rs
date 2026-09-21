@@ -53,7 +53,12 @@ fn ensure_launchable_url(url: &str) -> Result<()> {
     let parsed = url::Url::parse(url)
         .map_err(|err| anyhow::anyhow!("refusing to launch unparseable URL {url:?}: {err}"))?;
     match parsed.scheme() {
-        "http" | "https" | "file" => Ok(()),
+        "http" | "https" => Ok(()),
+        // Local files only. `file://host/share` is a remote filesystem; handing
+        // it to the browser (or converting it to a UNC path on Windows) makes
+        // the machine authenticate to that host.
+        "file" if crate::input_url::is_local_file_url(&parsed) => Ok(()),
+        "file" => anyhow::bail!("refusing to launch remote file URL: {url}"),
         other => anyhow::bail!(
             "refusing to launch URL with scheme {other:?} (allowed: http, https, file): {url}"
         ),
@@ -245,6 +250,13 @@ mod tests {
         assert!(ensure_launchable_url("https://example.com/path?x=1").is_ok());
         assert!(ensure_launchable_url("http://example.com/").is_ok());
         assert!(ensure_launchable_url("file:///tmp/report.html").is_ok());
+        assert!(ensure_launchable_url("file://localhost/tmp/report.html").is_ok());
+    }
+
+    #[test]
+    fn launch_gate_rejects_remote_file_urls() {
+        assert!(ensure_launchable_url("file://evil.example/share/a.html").is_err());
+        assert!(ensure_launchable_url("file://192.168.1.5/share/a.html").is_err());
     }
 
     #[test]

@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use url::Url;
 
@@ -31,10 +32,20 @@ fn is_absolute_path(path: &Path, raw: &str) -> bool {
 
 pub fn normalize_input_url(raw: &str) -> Result<String> {
     let trimmed = raw.trim();
-    if trimmed.starts_with("http://")
-        || trimmed.starts_with("https://")
-        || trimmed.starts_with("file://")
-    {
+    // A UNC path (`\\server\share` or `//server/share`) is not a local file.
+    // `Path::exists` on Windows authenticates to that server (NTLM). Refuse
+    // before any filesystem probe.
+    if is_unc_path(trimmed) {
+        bail!("refusing remote file path");
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return Ok(trimmed.to_string());
+    }
+    if trimmed.starts_with("file://") {
+        let url = Url::parse(trimmed)?;
+        if !is_local_file_url(&url) {
+            bail!("refusing remote file URL");
+        }
         return Ok(trimmed.to_string());
     }
 
@@ -43,6 +54,23 @@ pub fn normalize_input_url(raw: &str) -> Result<String> {
     }
 
     Ok(trimmed.to_string())
+}
+
+/// `file://` URLs with a remote host are WebDAV/SMB shares. Opening one, or
+/// even stating it, can leak credentials. Empty host, `localhost`, and
+/// loopback are local files.
+pub fn is_local_file_url(url: &Url) -> bool {
+    if url.scheme() != "file" {
+        return false;
+    }
+    match url.host_str() {
+        None | Some("") | Some("localhost") => true,
+        Some(host) => {
+            let host = host.trim_matches(|c| c == '[' || c == ']');
+            let host = host.split_once('%').map(|(ip, _)| ip).unwrap_or(host);
+            matches!(host.parse::<IpAddr>(), Ok(ip) if ip.is_loopback())
+        }
+    }
 }
 
 /// Strip a trailing root-label dot from the host (`github.com.` → `github.com`).
@@ -63,6 +91,9 @@ pub fn normalize_host(url: &mut Url) {
 
 fn file_path_to_url(raw: &str) -> Result<Option<String>> {
     let expanded = expand_tilde(raw);
+    if is_unc_path(raw) || is_unc_path(&expanded) {
+        bail!("refusing remote file path");
+    }
     let path = Path::new(&expanded);
     if !is_absolute_path(path, raw) {
         return Ok(None);
@@ -149,5 +180,31 @@ mod tests {
         assert!(is_routable_input(r"C:\Users\jan\report.html"));
         assert!(is_routable_input(r"\\server\share\report.html"));
         assert!(is_windows_drive_path(r"C:/Users/jan/report.html"));
+    }
+
+    #[test]
+    fn refuses_unc_paths_without_touching_them() {
+        let err = normalize_input_url(r"\\evil.example\share\secret.html").unwrap_err();
+        assert!(err.to_string().contains("remote file path"));
+        let err = normalize_input_url("//evil.example/share/secret.html").unwrap_err();
+        assert!(err.to_string().contains("remote file path"));
+    }
+
+    #[test]
+    fn refuses_remote_file_urls() {
+        let err = normalize_input_url("file://evil.example/share/a.html").unwrap_err();
+        assert!(err.to_string().contains("remote file URL"));
+        assert!(is_local_file_url(
+            &Url::parse("file:///tmp/a.html").unwrap()
+        ));
+        assert!(is_local_file_url(
+            &Url::parse("file://localhost/tmp/a.html").unwrap()
+        ));
+        assert!(is_local_file_url(
+            &Url::parse("file://127.0.0.1/tmp/a.html").unwrap()
+        ));
+        assert!(!is_local_file_url(
+            &Url::parse("file://evil.example/share/a.html").unwrap()
+        ));
     }
 }
