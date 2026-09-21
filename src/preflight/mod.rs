@@ -116,12 +116,51 @@ fn preflight_agent() -> Agent {
         // fixed and knowable. Contrast `MAX_UNWRAP_DEPTH`, which may be generous
         // precisely because its layers cost no I/O and no remote say.
         .max_redirects(0)
+        .https_only(true)
+        // Override ureq's env-proxy default. An HTTP proxy resolves the target
+        // itself unless `resolve_target` is set, which skips PublicOnlyResolver
+        // and lets a consented name rebind to a loopback or metadata address.
+        .proxy(dns_pinned_proxy())
         .build();
     Agent::with_parts(
         config,
         DefaultConnector::default(),
         PublicOnlyResolver::default(),
     )
+}
+
+/// Env proxy, rewritten so the target IP is chosen here and only from
+/// addresses [`PublicOnlyResolver`] allows. `None` when no proxy is configured
+/// — that still overrides ureq's default, which would otherwise read the
+/// environment again.
+fn dns_pinned_proxy() -> Option<ureq::Proxy> {
+    let current = ureq::Proxy::try_from_env()?;
+    let no_proxy = std::env::var("NO_PROXY")
+        .or_else(|_| std::env::var("no_proxy"))
+        .unwrap_or_default();
+    let entries: Vec<&str> = no_proxy
+        .split([',', ';'])
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .collect();
+    pin_proxy_dns(&current, &entries).ok()
+}
+
+fn pin_proxy_dns(current: &ureq::Proxy, no_proxy: &[&str]) -> Result<ureq::Proxy, ureq::Error> {
+    let mut builder = ureq::Proxy::builder(current.protocol())
+        .host(current.host())
+        .port(current.port())
+        .resolve_target(true);
+    if let Some(username) = current.username() {
+        builder = builder.username(username);
+    }
+    if let Some(password) = current.password() {
+        builder = builder.password(password);
+    }
+    for entry in no_proxy {
+        builder = builder.no_proxy(entry);
+    }
+    builder.build()
 }
 
 pub fn resolve(url: &Url) -> Result<PreflightResult> {
@@ -193,6 +232,20 @@ mod tests {
     fn parse_redirect_target_rejects_non_redirect_status() {
         let base = Url::parse("https://redirect.example.com/r/abc").unwrap();
         assert!(parse_redirect_target(&base, 200, "https://example.com/").is_err());
+    }
+
+    #[test]
+    fn pinned_proxy_resolves_the_target_locally() {
+        let proxy = ureq::Proxy::new("http://user:secret@proxy.example:8080").unwrap();
+        let pinned = pin_proxy_dns(&proxy, &["localhost", ".internal"]).unwrap();
+        assert!(pinned.resolve_target());
+        assert_eq!(pinned.host(), "proxy.example");
+        assert_eq!(pinned.port(), 8080);
+        assert_eq!(pinned.username(), Some("user"));
+        let local: ureq::http::Uri = "https://localhost/x".parse().unwrap();
+        let external: ureq::http::Uri = "https://example.com/x".parse().unwrap();
+        assert!(pinned.is_no_proxy(&local));
+        assert!(!pinned.is_no_proxy(&external));
     }
 
     #[test]

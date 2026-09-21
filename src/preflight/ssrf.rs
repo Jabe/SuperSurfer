@@ -28,7 +28,11 @@ pub fn ensure_public_host(host: &str) -> Result<()> {
         bail!("blocked preflight host: {host}");
     }
 
-    if let Ok(ip) = host.parse::<IpAddr>() {
+    // `Url::host_str()` yields IPv6 literals in brackets (`[::1]`). Parsing
+    // that as a hostname and looking it up does not see the address ureq will
+    // dial. Strip brackets and an interface zone (`fe80::1%eth0`) so the
+    // literal is classified here, before any DNS.
+    if let Some(ip) = ip_literal(&host) {
         if is_blocked_ip(ip) {
             bail!("blocked preflight address: {ip}");
         }
@@ -49,6 +53,17 @@ pub fn ensure_public_host(host: &str) -> Result<()> {
         bail!("no addresses resolved for {host}");
     }
     Ok(())
+}
+
+/// Parse a numeric host. Returns `None` for DNS names, including ones that
+/// merely look similar (`127.0.0.1.example.com`).
+fn ip_literal(host: &str) -> Option<IpAddr> {
+    let host = host
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(host);
+    let host = host.split_once('%').map(|(ip, _)| ip).unwrap_or(host);
+    host.parse().ok()
 }
 
 fn is_blocked_hostname(host: &str) -> bool {
@@ -136,6 +151,29 @@ mod tests {
     #[test]
     fn blocks_loopback_ip() {
         assert!(ensure_public_host("127.0.0.1").is_err());
+    }
+
+    #[test]
+    fn blocks_bracketed_ipv6_literals_as_addresses() {
+        // These must be rejected as addresses, not as failed DNS lookups of the
+        // bracketed text. A resolver that answers for that name would otherwise
+        // look "public" while ureq dials the literal.
+        for host in [
+            "[::1]",
+            "[fe80::1]",
+            "[::ffff:127.0.0.1]",
+            "[::ffff:169.254.169.254]",
+            "[fd00:ec2::254]",
+            "fe80::1%eth0",
+            "[fe80::1%eth0]",
+        ] {
+            let err = ensure_public_host(host).unwrap_err().to_string();
+            assert!(
+                err.contains("blocked preflight address"),
+                "{host}: {err}"
+            );
+        }
+        assert!(ensure_public_host("[2001:4860:4860::8888]").is_ok());
     }
 
     #[test]
