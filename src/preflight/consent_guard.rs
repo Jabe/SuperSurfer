@@ -62,46 +62,39 @@ mod platform {
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn save_guarded_consent_impl(path: &Path, contents: &str) -> Result<()> {
-        use std::fs;
-        use std::process::Command;
+        use sha2::{Digest, Sha256};
+        use std::io::Write;
+        use std::process::{Command, Stdio};
 
         let parent = path
             .parent()
             .context("guarded consent path has no parent directory")?;
-        let tmp = std::env::temp_dir().join(format!(
-            "supersurfer-consent-{}-{}.json",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        fs::write(&tmp, contents).with_context(|| format!("failed to write {}", tmp.display()))?;
+        let digest = Sha256::digest(contents.as_bytes());
+        let digest = digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let script =
+            consent_install_script(&digest, &parent.to_string_lossy(), &path.to_string_lossy());
 
-        let parent_arg = parent.to_string_lossy().into_owned();
-        let path_arg = path.to_string_lossy().into_owned();
-        let tmp_arg = tmp.to_string_lossy().into_owned();
-
-        let status = Command::new("sudo")
-            .args([
-                "sh",
-                "-c",
-                &format!(
-                    "mkdir -p {parent_q} && install -m 644 -o root -g {} {tmp_q} {path_q}",
-                    if cfg!(target_os = "macos") {
-                        "wheel"
-                    } else {
-                        "root"
-                    },
-                    parent_q = shell_quote(&parent_arg),
-                    tmp_q = shell_quote(&tmp_arg),
-                    path_q = shell_quote(&path_arg),
-                ),
-            ])
-            .status()
+        // The payload goes through sudo's stdin. A temp file in /tmp sits
+        // there for the whole password prompt, and another process running as
+        // the same user can replace it before root installs it.
+        let mut child = Command::new("sudo")
+            .args(["sh", "-c", &script])
+            .stdin(Stdio::piped())
+            .spawn()
             .context("failed to run sudo (is sudo available?)")?;
-
-        let _ = fs::remove_file(&tmp);
+        {
+            let mut stdin = child
+                .stdin
+                .take()
+                .context("sudo did not provide stdin for the allowlist")?;
+            stdin
+                .write_all(contents.as_bytes())
+                .context("failed to pass allowlist contents to sudo")?;
+        }
+        let status = child.wait().context("failed to wait for sudo")?;
 
         if !status.success() {
             anyhow::bail!(
@@ -110,6 +103,40 @@ mod platform {
             );
         }
         Ok(())
+    }
+
+    /// Root shell that installs `contents` only if they still hash to `digest`.
+    /// The digest is fixed in argv; swapped stdin fails the check and never
+    /// reaches `install`.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn consent_install_script(digest: &str, parent: &str, path: &str) -> String {
+        let group = if cfg!(target_os = "macos") {
+            "wheel"
+        } else {
+            "root"
+        };
+        format!(
+            r#"set -eu
+payload=$(mktemp)
+trap 'rm -f "$payload"' EXIT
+cat > "$payload"
+actual=$(if command -v sha256sum >/dev/null 2>&1; then sha256sum "$payload" | awk '{{print $1}}'; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$payload" | awk '{{print $1}}'; else openssl dgst -sha256 "$payload" | awk '{{print $NF}}'; fi)
+[ "$actual" = {digest_q} ]
+if [ -L {parent_q} ]; then
+  echo "refusing to install the allowlist through a symlink" >&2
+  exit 1
+fi
+mkdir -p {parent_q}
+chown root:{group} {parent_q}
+chmod 755 {parent_q}
+if [ -L {path_q} ]; then rm -f {path_q}; fi
+install -m 644 -o root -g {group} "$payload" {path_q}
+"#,
+            digest_q = shell_quote(digest),
+            parent_q = shell_quote(parent),
+            path_q = shell_quote(path),
+            group = group,
+        )
     }
 
     // Well-known SIDs, used instead of account names because names are localized
@@ -136,18 +163,31 @@ mod platform {
             )
         })?;
 
+        // A new ProgramData directory is writable by Users until icacls runs.
+        // Lock the directory first, then write. Writing first lets another
+        // process swap the file and have this command seal their copy.
+        harden_windows_acl(parent, "(OI)(CI)RX")?;
+        if let Ok(meta) = fs::symlink_metadata(path) {
+            if meta.file_type().is_symlink() {
+                fs::remove_file(path).with_context(|| {
+                    format!("failed to remove allowlist symlink {}", path.display())
+                })?;
+            } else {
+                harden_windows_acl(path, "R")?;
+            }
+        }
         fs::write(path, contents).with_context(|| {
             format!(
                 "failed to write {} — run `supersurfer resolve allow` from an elevated terminal",
                 path.display()
             )
         })?;
-
-        // Harden the parent directory too: FILE_DELETE_CHILD there would let a
-        // user replace the allowlist wholesale. Grant directory read to Users so
-        // non-elevated SuperSurfer can still open the file (which stays Users:R).
-        harden_windows_acl(parent, "(OI)(CI)RX")?;
         harden_windows_acl(path, "R")?;
+        let written = fs::read_to_string(path)
+            .with_context(|| format!("failed to read back {}", path.display()))?;
+        if written != contents {
+            anyhow::bail!("allowlist contents changed while saving {}", path.display());
+        }
         Ok(())
     }
 
@@ -214,13 +254,22 @@ mod platform {
         use std::os::unix::fs::MetadataExt;
 
         let guarded = guarded_consent_path_impl();
-        if !guarded.exists() {
+        // Follow no symlinks. `metadata` would treat a link to a root-owned
+        // file as guarded, and a writable parent can swap that link after the
+        // check.
+        let Ok(meta) = fs::symlink_metadata(&guarded) else {
             return Ok(ConsentProtection::Missing);
-        }
-        let meta = fs::metadata(&guarded)?;
-        // Root-owned alone is not enough: reject group/other-writable files so a
-        // mis-chmod'd allowlist is not treated as a protected SSRF consent source.
-        if meta.uid() == 0 && meta.mode() & 0o022 == 0 {
+        };
+        let Some(parent) = guarded.parent() else {
+            return Ok(ConsentProtection::Missing);
+        };
+        let Ok(parent_meta) = fs::symlink_metadata(parent) else {
+            return Ok(ConsentProtection::Missing);
+        };
+        let file_ok = meta.file_type().is_file() && meta.uid() == 0 && meta.mode() & 0o022 == 0;
+        let parent_ok =
+            parent_meta.is_dir() && parent_meta.uid() == 0 && parent_meta.mode() & 0o022 == 0;
+        if file_ok && parent_ok {
             Ok(ConsentProtection::Guarded)
         } else {
             Ok(ConsentProtection::Missing)
@@ -484,6 +533,23 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::platform::{consent_sddls_are_hardened, sddl_is_hardened};
+
+    #[cfg(unix)]
+    #[test]
+    fn consent_install_script_checks_hash_before_install() {
+        let script = super::platform::consent_install_script(
+            "abc123",
+            "/etc/supersurfer",
+            "/etc/supersurfer/resolve-allowed-hosts.json",
+        );
+        assert!(script.starts_with("set -eu\n"));
+        assert!(script.contains("[ \"$actual\" = 'abc123' ]"));
+        let check_at = script.find("[ \"$actual\"").unwrap();
+        let install_at = script.find("install -m 644").unwrap();
+        assert!(check_at < install_at);
+        assert!(script.contains("if [ -L '/etc/supersurfer' ]"));
+        assert!(!script.contains("evil.example"));
+    }
 
     // What save_guarded_consent_impl produces: Administrators owner, protected
     // DACL, Admins/SYSTEM full, Users read.
