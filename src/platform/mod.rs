@@ -13,7 +13,7 @@ pub use linux::desktop_file_path;
 #[cfg(target_os = "macos")]
 pub use macos::app_bundle_path;
 #[cfg(target_os = "windows")]
-pub use windows::{attach_parent_console, exe_path};
+pub use windows::{attach_parent_console, exe_path, repair_os_handler_command};
 
 pub fn system_default_browser_id(
     registry: &crate::browser::registry::BrowserRegistry,

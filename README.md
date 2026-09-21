@@ -127,7 +127,7 @@ Worth knowing under `route`: allowing a host with `supersurfer resolve allow` gi
 | `supersurfer logs` | Tail decision log |
 | `supersurfer update-rules` | Fetch signed URL-cleaning rules (planned) |
 
-When registered as the default browser, the OS invokes the packaged app with the URL (macOS: `SuperSurfer.app`; Windows: `supersurfer.exe "%1"`; Linux: `supersurfer %u` via `supersurfer.desktop`).
+When registered as the default browser, the OS invokes the packaged app with the URL (macOS: `SuperSurfer.app`; Windows: `supersurfer.exe --from-os "%1"`; Linux: `supersurfer --from-os %u` via `supersurfer.desktop`).
 
 ## Build from source
 

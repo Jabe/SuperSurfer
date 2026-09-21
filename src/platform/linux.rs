@@ -163,7 +163,7 @@ fn desktop_file_contents(exec_path: &str) -> String {
          Type=Application\n\
          Name=SuperSurfer\n\
          Comment=Browser router\n\
-         Exec={exec} %u\n\
+         Exec={exec} --from-os %u\n\
          Terminal=false\n\
          Categories=Network;WebBrowser;\n\
          MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;\n\
@@ -172,16 +172,24 @@ fn desktop_file_contents(exec_path: &str) -> String {
     )
 }
 
-/// Quote a path for a Desktop Entry `Exec=` key (spaces, quotes, backslashes).
+/// Quote a path for a Desktop Entry `Exec=` key.
+///
+/// Always quoted, so a `%` in the path is not a field code. Newlines are
+/// escaped: a raw newline ends the value and can inject another key.
 fn quote_desktop_exec(path: &str) -> String {
-    if path
-        .chars()
-        .any(|c| c.is_whitespace() || matches!(c, '"' | '\\' | '$' | '`' | '\''))
-    {
-        format!("\"{}\"", path.replace('\\', "\\\\").replace('"', "\\\""))
-    } else {
-        path.to_string()
+    let mut escaped = String::with_capacity(path.len());
+    for c in path.chars() {
+        match c {
+            '\\' | '"' => {
+                escaped.push('\\');
+                escaped.push(c);
+            }
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            _ => escaped.push(c),
+        }
     }
+    format!("\"{escaped}\"")
 }
 
 #[cfg(test)]
@@ -189,10 +197,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn quote_desktop_exec_leaves_simple_paths() {
+    fn quote_desktop_exec_quotes_simple_paths() {
         assert_eq!(
             quote_desktop_exec("/usr/bin/supersurfer"),
-            "/usr/bin/supersurfer"
+            "\"/usr/bin/supersurfer\""
         );
     }
 
@@ -205,8 +213,15 @@ mod tests {
     }
 
     #[test]
+    fn quote_desktop_exec_escapes_newlines() {
+        let quoted = quote_desktop_exec("/tmp/evil\nExec=malware");
+        assert!(!quoted.contains('\n'));
+        assert!(quoted.contains("\\n"));
+    }
+
+    #[test]
     fn desktop_file_quotes_spaced_exec() {
         let contents = desktop_file_contents("/opt/My Apps/supersurfer");
-        assert!(contents.contains("Exec=\"/opt/My Apps/supersurfer\" %u\n"));
+        assert!(contents.contains("Exec=\"/opt/My Apps/supersurfer\" --from-os %u\n"));
     }
 }

@@ -145,8 +145,44 @@ pub fn registration_status() -> String {
     }
 }
 
+/// Command line stored for the http(s) protocol handler.
+///
+/// `--from-os` is outside the substituted `%1`. A quote in the URL can split
+/// the quoted URL into more arguments, but it cannot delete this flag, and the
+/// CLI refuses `--from-os` unless the only other argument is one URL.
+pub fn os_handler_command(exe: &std::path::Path) -> String {
+    format!("\"{}\" --from-os \"%1\"", exe.display())
+}
+
+/// Upgrade a registration written before `--from-os` existed. Missing keys are
+/// left alone so a normal launch does not create a registration by itself.
+pub fn repair_os_handler_command() {
+    let Ok(exe) = exe_path() else {
+        return;
+    };
+    let desired = os_handler_command(&exe);
+    let marker = exe.display().to_string();
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    for subkey in [
+        format!(r"Software\Classes\{PROG_ID}\shell\open\command"),
+        format!(r"Software\Classes\{PROG_ID_HTML}\shell\open\command"),
+        format!(r"Software\Clients\StartMenuInternet\{APP_NAME}\shell\open\command"),
+    ] {
+        let Ok(key) = hkcu.open_subkey_with_flags(&subkey, KEY_READ | KEY_WRITE) else {
+            continue;
+        };
+        let Ok(current) = key.get_value::<String, _>("") else {
+            continue;
+        };
+        if current.contains("--from-os") || !current.contains(&marker) {
+            continue;
+        }
+        let _ = key.set_value("", &desired);
+    }
+}
+
 fn write_registry(exe: &PathBuf) -> Result<()> {
-    let command = format!("\"{}\" \"%1\"", exe.display());
+    let command = os_handler_command(exe);
     let icon = format!("{},0", exe.display());
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);

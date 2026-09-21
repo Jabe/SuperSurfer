@@ -67,11 +67,29 @@ pub enum ResolveCommands {
 
 pub fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let hot_path = parse_hot_path(&args);
+    // Rewrite an old `"exe" "%1"` registration before this process handles
+    // arguments. A URL that breaks out of those quotes is already in argv for
+    // this launch; the rewrite stops the next one.
+    #[cfg(target_os = "windows")]
+    platform::repair_os_handler_command();
+
+    let os_url = os_launch_url(&args)?;
+    let hot_path = if os_url.is_some() {
+        None
+    } else {
+        parse_hot_path(&args)
+    };
     let fresh_bootstrap = crate::bootstrap::ensure_ready()?;
     #[cfg(target_os = "windows")]
-    if hot_path.is_none() {
+    if hot_path.is_none() && os_url.is_none() {
         platform::attach_parent_console();
+    }
+
+    if let Some(url) = os_url {
+        // Opener flags are not accepted here. The Windows command line is
+        // built by substituting the URL into a quoted registry string, so a
+        // quote in the URL can invent extra arguments.
+        return platform::handle_url_arg(&url, None);
     }
 
     if let Some((url, opener)) = hot_path {
@@ -91,6 +109,25 @@ pub fn run() -> Result<()> {
         Commands::UpdateRules => cmd_update_rules(),
         Commands::Logs { lines } => logging::tail_logs(lines),
         Commands::Resolve { command } => cmd_resolve(command),
+    }
+}
+
+/// OS protocol-handler entry (`--from-os <url>`). Exactly one routable URL is
+/// accepted. Extra arguments are refused rather than parsed as a subcommand:
+/// Windows substitutes `%1` into `"exe" --from-os "%1"`, and a `"` in the URL
+/// would otherwise arrive as `init --force` or `--opener-name Slack`.
+fn os_launch_url(args: &[String]) -> Result<Option<String>> {
+    if !args.iter().any(|arg| arg == "--from-os") {
+        return Ok(None);
+    }
+    let rest: Vec<&str> = args
+        .iter()
+        .filter(|arg| arg.as_str() != "--from-os")
+        .map(String::as_str)
+        .collect();
+    match rest.as_slice() {
+        [url] if crate::input_url::is_routable_input(url) => Ok(Some((*url).to_string())),
+        _ => anyhow::bail!("refusing to handle an OS URL open with unexpected arguments"),
     }
 }
 
@@ -392,5 +429,35 @@ mod tests {
     #[test]
     fn empty_args_are_not_hot_path() {
         assert!(parse_hot_path(&[]).is_none());
+    }
+
+    #[test]
+    fn os_launch_accepts_one_url() {
+        let url = os_launch_url(&s(&["--from-os", "https://example.com"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(url, "https://example.com");
+    }
+
+    #[test]
+    fn os_launch_refuses_subcommand_breakout() {
+        let err = os_launch_url(&s(&["--from-os", "init", "--force"])).unwrap_err();
+        assert!(err.to_string().contains("unexpected arguments"));
+        let err = os_launch_url(&s(&[
+            "--from-os",
+            "https://evil.example",
+            "--opener-name",
+            "Slack",
+        ]))
+        .unwrap_err();
+        assert!(err.to_string().contains("unexpected arguments"));
+    }
+
+    #[test]
+    fn os_launch_flag_absent_is_not_an_os_open() {
+        assert!(os_launch_url(&s(&["https://example.com"]))
+            .unwrap()
+            .is_none());
+        assert!(os_launch_url(&s(&["init", "--force"])).unwrap().is_none());
     }
 }
