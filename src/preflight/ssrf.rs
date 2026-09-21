@@ -168,10 +168,7 @@ mod tests {
             "[fe80::1%eth0]",
         ] {
             let err = ensure_public_host(host).unwrap_err().to_string();
-            assert!(
-                err.contains("blocked preflight address"),
-                "{host}: {err}"
-            );
+            assert!(err.contains("blocked preflight address"), "{host}: {err}");
         }
         assert!(ensure_public_host("[2001:4860:4860::8888]").is_ok());
     }
