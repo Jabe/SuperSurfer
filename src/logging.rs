@@ -11,6 +11,7 @@ pub fn log_dir() -> Result<PathBuf> {
         .context("could not resolve SuperSurfer config directory")?;
     let dir = dirs.data_local_dir().join("logs");
     fs::create_dir_all(&dir)?;
+    crate::config::restrict_dir(&dir);
     Ok(dir)
 }
 
@@ -29,6 +30,7 @@ pub fn preflight_log_file() -> Result<PathBuf> {
 pub fn append_decision(line: &str) -> Result<()> {
     let path = log_file()?;
     let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    crate::config::restrict_file(&path);
     let timestamp = OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "unknown-time".to_string());
@@ -39,6 +41,7 @@ pub fn append_decision(line: &str) -> Result<()> {
 pub fn append_preflight(line: &str) -> Result<()> {
     let path = preflight_log_file()?;
     let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    crate::config::restrict_file(&path);
     let timestamp = OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "unknown-time".to_string());
@@ -49,6 +52,7 @@ pub fn append_preflight(line: &str) -> Result<()> {
 pub fn append_script_log(line: &str) -> Result<()> {
     let path = script_log_file()?;
     let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    crate::config::restrict_file(&path);
     let timestamp = OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "unknown-time".to_string());

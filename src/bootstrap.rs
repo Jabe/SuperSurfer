@@ -34,10 +34,12 @@ pub fn ensure_ready() -> Result<bool> {
         // On upgrade (stored_version is Some but mismatched), refresh types so
         // editor IntelliSense tracks the installed SuperSurfer version.
         fs::write(&types, config::types_stub())?;
+        config::restrict_file(&types);
     }
 
     fs::write(&marker, current_version)
         .with_context(|| format!("failed to write bootstrap marker at {}", marker.display()))?;
+    config::restrict_file(&marker);
 
     Ok(true)
 }

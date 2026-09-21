@@ -134,10 +134,12 @@ pub fn save(fingerprint: &str, browsers: &HashMap<String, BrowserInstall>) -> Re
     // Atomic replace so a crash mid-write cannot leave a truncated JSON file.
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, data)?;
+    crate::config::restrict_file(&tmp);
     if path.exists() {
         let _ = fs::remove_file(&path);
     }
     fs::rename(&tmp, &path)?;
+    crate::config::restrict_file(&path);
     Ok(())
 }
 
