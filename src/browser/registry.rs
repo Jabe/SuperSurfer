@@ -829,30 +829,62 @@ fn discover_inner(_fresh: bool) -> Result<BrowserRegistry> {
 
 #[cfg(target_os = "linux")]
 fn linux_application_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(base) = directories::BaseDirs::new() {
-        dirs.push(base.data_local_dir().join("applications"));
-    }
-    // Always search standard install locations. CLI sessions often omit snap/flatpak
-    // paths from XDG_DATA_DIRS even when those browsers are the system default.
-    for path in [
-        "/usr/local/share/applications",
-        "/usr/share/applications",
-        "/var/lib/snapd/desktop/applications",
-        "/var/lib/flatpak/exports/share/applications",
-    ] {
-        dirs.push(PathBuf::from(path));
-    }
     let xdg_data_dirs = std::env::var("XDG_DATA_DIRS")
         .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+    let mut extra = Vec::new();
     for entry in xdg_data_dirs.split(':') {
         if entry.is_empty() {
             continue;
         }
-        dirs.push(Path::new(entry).join("applications"));
+        let dir = Path::new(entry).join("applications");
+        // XDG_DATA_DIRS is session environment. Only root-owned, non-writable
+        // directories may add a browser ahead of the per-user applications dir.
+        if system_desktop_dir_is_trusted(&dir) {
+            extra.push(dir);
+        }
     }
-    dirs.dedup();
+    let user = directories::BaseDirs::new().map(|base| base.data_local_dir().join("applications"));
+    desktop_dir_search_order(user, &extra)
+}
+
+/// System locations first, then other trusted data dirs, then the per-user
+/// applications directory. A `google-chrome.desktop` in the home directory
+/// must not override `/usr/share`.
+#[cfg(any(target_os = "linux", test))]
+fn desktop_dir_search_order(user: Option<PathBuf>, extra: &[PathBuf]) -> Vec<PathBuf> {
+    let mut dirs = vec![
+        PathBuf::from("/usr/local/share/applications"),
+        PathBuf::from("/usr/share/applications"),
+        PathBuf::from("/var/lib/snapd/desktop/applications"),
+        PathBuf::from("/var/lib/flatpak/exports/share/applications"),
+    ];
+    for dir in extra {
+        if !dirs.contains(dir) {
+            dirs.push(dir.clone());
+        }
+    }
+    if let Some(user) = user {
+        dirs.retain(|dir| dir != &user);
+        dirs.push(user);
+    }
     dirs
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn system_desktop_dir_is_trusted(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(meta) = std::fs::symlink_metadata(path) else {
+            return false;
+        };
+        meta.is_dir() && meta.uid() == 0 && meta.mode() & 0o022 == 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        false
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -867,9 +899,15 @@ fn discover_browser_linux(spec: &KnownBrowser, dirs: &[PathBuf]) -> Result<Optio
         return Ok(None);
     };
 
-    let Some(exec) = parse_desktop_exec(&desktop_file) else {
+    let Some(token) = parse_desktop_exec(&desktop_file) else {
         return Ok(None);
     };
+    let Some(exec) = resolve_desktop_exec(&token) else {
+        return Ok(None);
+    };
+    if !exec_path_is_plausible(&exec) {
+        return Ok(None);
+    }
 
     let profiles = discover_profiles_linux(spec)?;
 
@@ -918,11 +956,83 @@ fn parse_desktop_exec_value(value: &str) -> Option<String> {
     }
 
     for token in tokens {
-        if !token.starts_with('%') {
-            return Some(token.to_string());
+        if token.starts_with('%') {
+            continue;
+        }
+        let token = unquote_desktop_token(token);
+        if token.is_empty() || token.starts_with('%') {
+            continue;
+        }
+        return Some(token);
+    }
+    None
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn unquote_desktop_token(token: &str) -> String {
+    let token = token.trim();
+    if token.len() >= 2 && token.starts_with('"') && token.ends_with('"') {
+        return unescape_desktop_quotes(&token[1..token.len() - 1]);
+    }
+    token.to_string()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn unescape_desktop_quotes(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some(escaped) => out.push(escaped),
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Absolute `Exec=` paths are used as written. A bare name is resolved from
+/// system directories before `~/.local/bin`, so a PATH entry cannot replace
+/// `/usr/bin/firefox`.
+#[cfg(target_os = "linux")]
+fn resolve_desktop_exec(token: &str) -> Option<String> {
+    if token.starts_with('/') {
+        return Some(token.to_string());
+    }
+    if token.contains('/') || token.contains('\\') {
+        return None;
+    }
+    for dir in exec_search_dirs() {
+        let candidate = dir.join(token);
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().into_owned());
         }
     }
     None
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn exec_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![
+        PathBuf::from("/usr/bin"),
+        PathBuf::from("/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/snap/bin"),
+    ];
+    if let Some(base) = directories::BaseDirs::new() {
+        dirs.push(base.home_dir().join(".local/bin"));
+    }
+    dirs
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn exec_path_is_plausible(path: &str) -> bool {
+    let lower = path.replace('\\', "/").to_ascii_lowercase();
+    const BAD_PREFIXES: &[&str] = &["/tmp/", "/var/tmp/", "/dev/shm/", "/private/tmp/"];
+    !BAD_PREFIXES.iter().any(|prefix| lower.starts_with(prefix))
 }
 
 #[cfg(target_os = "linux")]
@@ -1184,5 +1294,48 @@ mod tests {
             parse_desktop_exec_value("google-chrome-stable %U"),
             Some("google-chrome-stable".to_string())
         );
+        assert_eq!(
+            parse_desktop_exec_value("\"/usr/bin/firefox\" %u"),
+            Some("/usr/bin/firefox".to_string())
+        );
+    }
+
+    #[test]
+    fn user_desktop_dir_does_not_override_system_dirs() {
+        let user = PathBuf::from("/home/user/.local/share/applications");
+        let extra = [PathBuf::from("/tmp/evil/applications")];
+        let dirs = desktop_dir_search_order(Some(user.clone()), &extra);
+        let user_at = dirs.iter().position(|dir| dir == &user).unwrap();
+        let system_at = dirs
+            .iter()
+            .position(|dir| dir == Path::new("/usr/share/applications"))
+            .unwrap();
+        assert!(system_at < user_at);
+        assert_eq!(dirs.last(), Some(&user));
+        assert!(exec_search_dirs()
+            .last()
+            .is_some_and(|dir| dir.ends_with(".local/bin")));
+        assert_eq!(
+            exec_search_dirs().first().map(PathBuf::as_path),
+            Some(Path::new("/usr/bin"))
+        );
+    }
+
+    #[test]
+    fn temp_executables_are_not_plausible_browsers() {
+        assert!(!exec_path_is_plausible("/tmp/chrome"));
+        assert!(!exec_path_is_plausible("/var/tmp/chrome"));
+        assert!(!exec_path_is_plausible("/dev/shm/chrome"));
+        assert!(exec_path_is_plausible("/usr/bin/firefox"));
+    }
+
+    #[test]
+    fn user_writable_desktop_dir_is_not_a_trusted_system_dir() {
+        let dir =
+            std::env::temp_dir().join(format!("supersurfer-desktop-trust-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!system_desktop_dir_is_trusted(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

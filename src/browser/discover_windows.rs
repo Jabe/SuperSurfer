@@ -24,6 +24,12 @@ pub(super) fn discover_one(
     load_profiles: bool,
 ) -> Result<Option<BrowserInstall>> {
     let hints = windows_hints(spec.id);
+    // A normal install on disk wins over StartMenuInternet. HKCU is
+    // user-writable, and a path only has to *contain* the vendor marker, so a
+    // planted key must not override Program Files or LocalAppData.
+    if let Some(exe_path) = find_on_disk(hints) {
+        return Ok(Some(build_install(spec, exe_path, None, load_profiles)?));
+    }
     if let Some((exe_path, display_name)) = find_in_start_menu_internet(spec, hints, start_menu)? {
         return Ok(Some(build_install(
             spec,
@@ -31,9 +37,6 @@ pub(super) fn discover_one(
             display_name,
             load_profiles,
         )?));
-    }
-    if let Some(exe_path) = find_on_disk(hints) {
-        return Ok(Some(build_install(spec, exe_path, None, load_profiles)?));
     }
     Ok(None)
 }
@@ -69,7 +72,10 @@ fn find_in_start_menu_internet(
     for (key_name, app_name, command) in start_menu {
         if matches_spec(spec, hints, &key_name, &app_name, &command) {
             if let Some(exe) = parse_command_path(&command) {
-                if path_matches_hints(hints, &exe) && Path::new(&exe).exists() {
+                if path_matches_hints(hints, &exe)
+                    && registered_exe_is_plausible(&exe)
+                    && Path::new(&exe).exists()
+                {
                     return Ok(Some((exe, Some(app_name.clone()))));
                 }
             }
@@ -205,6 +211,13 @@ fn path_matches_hints(hints: Option<&WindowsHints>, exe: &str) -> bool {
         .iter()
         .chain(hints.local_appdata_paths.iter())
         .any(|rel| lower.contains(&rel.replace('/', "\\").to_ascii_lowercase()))
+}
+
+/// Registry commands under Temp are not browser installs. The marker check is
+/// a substring, so `...\Temp\google\chrome\application\chrome.exe` would match.
+fn registered_exe_is_plausible(exe: &str) -> bool {
+    let lower = exe.replace('/', "\\").to_ascii_lowercase();
+    !lower.contains("\\temp\\") && !lower.contains("\\tmp\\")
 }
 
 fn parse_command_path(command: &str) -> Option<String> {
@@ -475,6 +488,16 @@ const HINTS_WAVEBOX: WindowsHints = hints!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_temp_registered_executables() {
+        assert!(!registered_exe_is_plausible(
+            r"C:\Users\Public\AppData\Local\Temp\google\chrome\application\chrome.exe"
+        ));
+        assert!(registered_exe_is_plausible(
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        ));
+    }
 
     #[test]
     fn parses_quoted_command_paths() {
